@@ -1,0 +1,35 @@
+config:
+  # Set TARGET_URL before running:
+  #   export TARGET_URL=$(cd ../terraform && terraform output -raw app_url)
+  #   artillery run artillery.yml
+  target: "{{ $env.TARGET_URL }}"
+
+  phases:
+    # Phase 1 — baseline: prove the app works fine at low load
+    - name: "Warm up"
+      duration: 30
+      arrivalRate: 1
+
+    # Phase 2 — ramp: watch CPU climb in CloudWatch
+    - name: "Ramp up"
+      duration: 60
+      arrivalRate: 1
+      rampTo: 30
+
+    # Phase 3 — sustained pressure: response times spike, errors appear
+    - name: "Sustained load"
+      duration: 90
+      arrivalRate: 30
+
+  # Report latency percentiles
+  plugins:
+    metrics-by-endpoint: {}
+
+scenarios:
+  - name: "CPU work"
+    flow:
+      - get:
+          url: "/work"
+          # Treat anything ≥ 500 as a failure (shows up red in the report)
+          expect:
+            - statusCode: 200
