@@ -1,6 +1,6 @@
 # Does my application need balancing? — Demo Branch 1
 
-> **Branch:** `01-single-ec2-no-scaling`
+> **Branch:** `main`
 >
 > A single `t2.micro` EC2, no load balancer, no Auto Scaling.
 > We'll show how quickly a modest amount of traffic saturates it.
@@ -79,12 +79,23 @@ Metrics to watch:
 - **CPUUtilization** — will peg at 100 %
 - **NetworkIn / NetworkOut** — will spike
 
+> **Caveat — T2 CPU credit throttling**
+>
+> `t2.*` instances use a **credit-based bursting model**. At rest, a `t2.micro` earns credits that allow it to burst above its 10 % CPU baseline. Once those credits are exhausted, **AWS throttles the vCPU back to 10 % at the hypervisor level** — below the OS and below anything you can observe from inside the instance.
+>
+> This means CloudWatch may show a surprisingly low CPU percentage (e.g. 10–20 %) even while the server is completely saturated and returning timeouts. The instance isn't idle — it's being throttled.
+>
+> If you want to see CPU spike cleanly to 100 %, switch to a `t3.micro` (unlimited burst by default) in `terraform/variables.tf`. The saturation behavior will be the same, but the CloudWatch graph will be more dramatic and easier to explain to an audience.
+
 ### 5 — Run the load test
 
 ```bash
 cd ../load-test
 export TARGET_URL=$(cd ../terraform && terraform output -raw app_url)
 artillery run artillery.yml
+
+# Save results to JSON for later analysis
+artillery run artillery.yml --output report.json 
 ```
 
 Artillery runs three phases:

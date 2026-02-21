@@ -79,6 +79,12 @@ resource "aws_instance" "app" {
   user_data                   = file("${path.module}/user-data.sh")
   user_data_replace_on_change = true
 
+  # Disable CPU credit throttling so utilization can reach 100 %
+  # Only applies to T2/T3/T4g burstable instance families
+  credit_specification {
+    cpu_credits = "unlimited"
+  }
+
   tags = {
     Name = var.app_name
   }
