@@ -43,7 +43,9 @@ Application Load Balancer  (port 80)
 - New instances are bootstrapped via `user-data.sh` and registered with the ALB target group automatically — no manual steps.
 - The ALB health-checks `/health` every 15 s and only routes traffic to healthy targets.
 
-### Scaling policy
+### Scaling policies
+
+**CPU-based (reactive)** — responds to live traffic:
 
 | Setting | Value |
 |---------|-------|
@@ -53,6 +55,16 @@ Application Load Balancer  (port 80)
 | Min instances | 1 |
 | Desired instances | 2 |
 | Max instances | 4 |
+
+**Scheduled (proactive)** — reduces cost during off-hours:
+
+| Action | Time (UTC) | min | desired | Effect |
+|--------|-----------|-----|---------|--------|
+| Scale down | 10 PM daily (`0 22 * * *`) | 0 | 0 | All instances terminated |
+| Scale up | 6 AM daily (`0 6 * * *`) | 1 | 1 | One instance started before peak traffic |
+
+> Both policies coexist. During the day the CPU policy manages reactive scaling between 1–4 instances.
+> At night the scheduled actions override capacity to zero, eliminating idle instance costs entirely.
 
 ---
 

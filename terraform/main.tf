@@ -175,6 +175,32 @@ resource "aws_autoscaling_policy" "cpu" {
   }
 }
 
+# ─── Scheduled Scaling ────────────────────────────────────────────────────────
+# All times are UTC. Adjust recurrence if your audience is in a different timezone.
+
+# 10 PM UTC — scale fleet to 0 (night hours, no traffic expected)
+# min_size must also be set to 0, otherwise the ASG will not go below its minimum
+resource "aws_autoscaling_schedule" "scale_down_night" {
+  scheduled_action_name  = "${var.app_name}-scale-down-night"
+  autoscaling_group_name = aws_autoscaling_group.app.name
+  recurrence             = "0 22 * * *"
+  time_zone              = "UTC"
+  min_size               = 0
+  max_size               = 4
+  desired_capacity       = 0
+}
+
+# 6 AM UTC — bring 1 instance back online (morning warm-up before peak traffic)
+resource "aws_autoscaling_schedule" "scale_up_morning" {
+  scheduled_action_name  = "${var.app_name}-scale-up-morning"
+  autoscaling_group_name = aws_autoscaling_group.app.name
+  recurrence             = "0 6 * * *"
+  time_zone              = "UTC"
+  min_size               = 1
+  max_size               = 4
+  desired_capacity       = 1
+}
+
 # ─── Application Load Balancer ────────────────────────────────────────────────
 
 resource "aws_lb" "app" {
