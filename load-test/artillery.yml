@@ -5,20 +5,22 @@ config:
   target: "{{ $env.TARGET_URL }}"
 
   phases:
-    # Phase 1 — baseline: prove the two-instance fleet handles low load with ease
+    # Phase 1 — baseline: prove the fleet handles low load comfortably
     - name: "Warm up"
       duration: 30
       arrivalRate: 5
 
-    # Phase 2 — ramp: both CPUs climb steadily; watch CloudWatch for each instance
+    # Phase 2 — ramp: push CPU above the 60 % scaling threshold on both instances
     - name: "Ramp up"
-      duration: 90
+      duration: 60
       arrivalRate: 5
       rampTo: 70
 
-    # Phase 3 — saturation: ~35 req/s per instance, past the single-instance breaking point
-    - name: "Saturate"
-      duration: 120
+    # Phase 3 — sustained pressure: hold load while ASG detects high CPU,
+    # provisions new instances (~90 s boot), and registers them with the ALB.
+    # 4 minutes gives enough time to watch the full scale-out in CloudWatch.
+    - name: "Sustained — wait for ASG to scale out"
+      duration: 240
       arrivalRate: 70
 
   # Report latency percentiles

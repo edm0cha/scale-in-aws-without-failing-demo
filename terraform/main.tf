@@ -106,28 +106,72 @@ resource "aws_security_group" "app" {
   }
 }
 
-# ─── EC2 Instance ─────────────────────────────────────────────────────────────
+# ─── Launch Template ──────────────────────────────────────────────────────────
 
-resource "aws_instance" "app" {
-  ami                         = data.aws_ami.amazon_linux_2023.id
-  instance_type               = var.instance_type
-  vpc_security_group_ids      = [aws_security_group.app.id]
-  associate_public_ip_address = true
+resource "aws_launch_template" "app" {
+  name_prefix   = "${var.app_name}-"
+  image_id      = data.aws_ami.amazon_linux_2023.id
+  instance_type = var.instance_type
+
+  vpc_security_group_ids = [aws_security_group.app.id]
 
   # Enable detailed (1-minute) CloudWatch metrics so spikes show up fast
-  monitoring = true
-
-  user_data                   = file("${path.module}/user-data.sh")
-  user_data_replace_on_change = true
+  monitoring {
+    enabled = true
+  }
 
   # Disable CPU credit throttling so utilization can reach 100 %
-  # Only applies to T2/T3/T4g burstable instance families
   credit_specification {
     cpu_credits = "unlimited"
   }
 
-  tags = {
-    Name = var.app_name
+  user_data = base64encode(file("${path.module}/user-data.sh"))
+
+  tag_specifications {
+    resource_type = "instance"
+    tags = {
+      Name = var.app_name
+    }
+  }
+}
+
+# ─── Auto Scaling Group ───────────────────────────────────────────────────────
+
+resource "aws_autoscaling_group" "app" {
+  name                      = "${var.app_name}-asg"
+  min_size                  = 1
+  max_size                  = 4
+  desired_capacity          = 2
+  vpc_zone_identifier       = data.aws_subnets.default.ids
+  health_check_type         = "ELB"
+  health_check_grace_period = 120
+
+  launch_template {
+    id      = aws_launch_template.app.id
+    version = "$Latest"
+  }
+
+  # Register instances with the ALB target group automatically
+  target_group_arns = [aws_lb_target_group.app.arn]
+
+  tag {
+    key                 = "Name"
+    value               = var.app_name
+    propagate_at_launch = true
+  }
+}
+
+# CPU-based target tracking policy — scale out when average CPU exceeds 60 %
+resource "aws_autoscaling_policy" "cpu" {
+  name                   = "${var.app_name}-cpu-policy"
+  autoscaling_group_name = aws_autoscaling_group.app.name
+  policy_type            = "TargetTrackingScaling"
+
+  target_tracking_configuration {
+    predefined_metric_specification {
+      predefined_metric_type = "ASGAverageCPUUtilization"
+    }
+    target_value = 60.0
   }
 }
 
@@ -161,38 +205,6 @@ resource "aws_lb_target_group" "app" {
   tags = {
     Name = "${var.app_name}-tg"
   }
-}
-
-resource "aws_instance" "app2" {
-  ami                         = data.aws_ami.amazon_linux_2023.id
-  instance_type               = var.instance_type
-  vpc_security_group_ids      = [aws_security_group.app.id]
-  associate_public_ip_address = true
-
-  monitoring = true
-
-  user_data                   = file("${path.module}/user-data.sh")
-  user_data_replace_on_change = true
-
-  credit_specification {
-    cpu_credits = "unlimited"
-  }
-
-  tags = {
-    Name = "${var.app_name}-2"
-  }
-}
-
-resource "aws_lb_target_group_attachment" "app" {
-  target_group_arn = aws_lb_target_group.app.arn
-  target_id        = aws_instance.app.id
-  port             = 3000
-}
-
-resource "aws_lb_target_group_attachment" "app2" {
-  target_group_arn = aws_lb_target_group.app.arn
-  target_id        = aws_instance.app2.id
-  port             = 3000
 }
 
 resource "aws_lb_listener" "http" {

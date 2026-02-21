@@ -1,10 +1,10 @@
-# Does my application need balancing? — Saturating the ALB Fleet
+# Does my application need balancing? — Auto Scaling Group
 
-> **Branch:** `02-saturate-alb`
+> **Branch:** `03-auto-scaling-group`
 >
-> Two `t2.micro` EC2 instances behind an Application Load Balancer, no Auto Scaling.
-> We'll prove that a fixed fleet has a hard ceiling — double the instances, double the breaking point,
-> but it still breaks. The solution requires Auto Scaling.
+> An Application Load Balancer fronting an **Auto Scaling Group** of `t2.micro` instances.
+> When CPU exceeds 60 %, AWS automatically launches new instances and registers them with the ALB.
+> When load drops, it terminates the extras. No manual intervention required.
 
 ---
 
@@ -12,9 +12,9 @@
 
 | Path | Purpose |
 |------|---------|
-| `terraform/` | Infrastructure — 2× EC2 + ALB + Security Groups in us-east-1 |
+| `terraform/` | Infrastructure — ASG + Launch Template + ALB + Security Groups in us-east-1 |
 | `app/` | Node.js app source (also embedded in `user-data.sh`) |
-| `load-test/artillery.yml` | Artillery scenario that ramps traffic until the fleet breaks |
+| `load-test/artillery.yml` | Artillery scenario that triggers and observes the ASG scale-out |
 
 ### The app
 
@@ -23,7 +23,7 @@ Two endpoints:
 | Endpoint | Description |
 |----------|-------------|
 | `GET /health` | Liveness check — returns `200` and the responding `instance` ID |
-| `GET /work` | **Synchronous** prime-number calculation. Blocks the event loop. On a `t2.micro`, each request takes ~300–600 ms. Under concurrent load, requests queue up, CPU hits 100 %, and response times explode. |
+| `GET /work` | **Synchronous** prime-number calculation. Blocks the event loop. On a `t2.micro`, each request takes ~300–600 ms. Under concurrent load, CPU climbs and the ASG reacts. |
 
 ### The infrastructure
 
@@ -33,13 +33,26 @@ Internet
     ▼
 Application Load Balancer  (port 80)
     │
-    ├──▶ EC2 instance 1  (port 3000)
-    └──▶ EC2 instance 2  (port 3000)
+    ├──▶ EC2 instance 1  (port 3000)  ─┐
+    ├──▶ EC2 instance 2  (port 3000)   ├── Auto Scaling Group (min 1 / desired 2 / max 4)
+    └──▶ EC2 instance 3  (port 3000)  ─┘  ← launched automatically when CPU > 60 %
 ```
 
-- The ALB round-robins requests across both instances.
-- Each instance handles ~half the load, so CPU per instance stays lower.
-- The ALB health-checks `/health` every 15 s and stops routing to any instance that fails.
+- The ASG starts with **2 instances** (desired capacity).
+- A **target tracking policy** keeps average CPU at or below **60 %** by launching or terminating instances automatically.
+- New instances are bootstrapped via `user-data.sh` and registered with the ALB target group automatically — no manual steps.
+- The ALB health-checks `/health` every 15 s and only routes traffic to healthy targets.
+
+### Scaling policy
+
+| Setting | Value |
+|---------|-------|
+| Policy type | Target Tracking |
+| Metric | `ASGAverageCPUUtilization` |
+| Target | 60 % |
+| Min instances | 1 |
+| Desired instances | 2 |
+| Max instances | 4 |
 
 ---
 
@@ -61,19 +74,17 @@ terraform init
 terraform apply
 ```
 
-Note the outputs — you'll need `app_url`:
+Note the outputs:
 
 ```
-alb_dns_name  = "scale-demo-alb-1234567890.us-east-1.elb.amazonaws.com"
-app_url       = "http://scale-demo-alb-1234567890.us-east-1.elb.amazonaws.com"
-instance_id   = "i-0abc..."
-instance_id_2 = "i-0xyz..."
+asg_name     = "scale-demo-asg"
+alb_dns_name = "scale-demo-alb-1234567890.us-east-1.elb.amazonaws.com"
+app_url      = "http://scale-demo-alb-1234567890.us-east-1.elb.amazonaws.com"
 ```
 
-### 2 — Wait for both instances to start (~90 s)
+### 2 — Wait for the initial instances to start (~90 s)
 
-Both instances run `user-data.sh` on first boot to install Node.js and start the app via PM2.
-The ALB waits for each target to pass 2 consecutive health checks before sending traffic to it.
+Both instances launched by the ASG run `user-data.sh` on first boot to install Node.js and start the app via PM2. The ALB waits for each target to pass 2 consecutive health checks before sending traffic.
 
 ```bash
 # Poll until you get a 200 through the ALB
@@ -81,9 +92,17 @@ curl $(terraform output -raw health_url)
 # {"status":"ok","instance":"i-0abc..."}
 ```
 
-### 3 — Show the ALB distributing requests across both instances
+### 3 — Show the ASG and ALB in the console
+
+**EC2 → Auto Scaling Groups → `scale-demo-asg`:**
+- Check the **Activity** tab — shows instance launches and terminations.
+- Check the **Instance management** tab — shows all running instances and their health status.
+
+**EC2 → Load Balancers → Target Groups → `scale-demo-tg`:**
+- All initial instances should show **healthy**.
 
 ```bash
+# Hit /health a few times to see the ALB rotating across instances
 curl "$(terraform output -raw health_url)"
 # {"status":"ok","instance":"i-0abc..."}   ← instance 1
 
@@ -91,30 +110,20 @@ curl "$(terraform output -raw health_url)"
 # {"status":"ok","instance":"i-0xyz..."}   ← instance 2
 ```
 
-**Talking point:** the `instance` field alternates — the ALB is splitting traffic across both servers.
-
-```bash
-curl "$(terraform output -raw work_url)"
-# {"instance":"i-0abc...","limit":20000,"primesFound":2262,"elapsed":"312ms"}
-```
-
 ### 4 — Open CloudWatch in the console
 
-AWS Console → EC2 → Instances → select **both** instances → **Monitoring** tab.
+AWS Console → EC2 → Auto Scaling Groups → `scale-demo-asg` → **Monitoring** tab.
 
-> Enable **detailed monitoring** if you want 1-minute granularity (already enabled by Terraform).
-
-Metrics to watch on each instance:
-- **CPUUtilization** — both instances share the load, so CPU climbs slower than on a single server
-- **NetworkIn / NetworkOut** — will spike on both
+Metrics to watch:
+- **Group In Service Instances** — will increase as the ASG scales out
+- **Group Desired Capacity** — rises when the policy fires
+- **CPUUtilization (per instance)** — climbs during load, drops as new instances join
 
 > **Caveat — T2 CPU credit throttling**
 >
-> `t2.*` instances use a **credit-based bursting model**. At rest, a `t2.micro` earns credits that allow it to burst above its 10 % CPU baseline. Once those credits are exhausted, **AWS throttles the vCPU back to 10 % at the hypervisor level** — below the OS and below anything you can observe from inside the instance.
->
-> This means CloudWatch may show a surprisingly low CPU percentage (e.g. 10–20 %) even while the server is completely saturated and returning timeouts. The instance isn't idle — it's being throttled.
->
-> Both instances have `cpu_credits = "unlimited"` configured in Terraform, which disables this throttling and allows CPU to reach 100 % freely.
+> `t2.*` instances use a **credit-based bursting model**. Once credits are exhausted, AWS throttles
+> the vCPU to 10 % at the hypervisor level. All instances in this demo have `cpu_credits = "unlimited"`
+> configured in the launch template, which disables throttling and lets CPU reach 100 % freely.
 
 ### 5 — Run the load test
 
@@ -130,22 +139,22 @@ artillery run artillery.yml --output report.json
 artillery report report.json
 ```
 
-Artillery runs three phases designed to push past the two-instance ceiling:
+Artillery runs three phases designed to trigger and observe the ASG scale-out:
 
-| Phase | Duration | Rate | Per instance |
-|-------|----------|------|--------------|
-| Warm up | 30 s | 5 req/s | ~2.5 req/s — comfortable |
-| Ramp up | 90 s | 5 → 70 req/s | ~2.5 → 35 req/s — climbing |
-| Saturate | 120 s | 70 req/s | ~35 req/s — past breaking point |
+| Phase | Duration | Rate | What to expect |
+|-------|----------|------|----------------|
+| Warm up | 30 s | 5 req/s | Low CPU, 0 errors, 2 instances serving |
+| Ramp up | 60 s | 5 → 70 req/s | CPU crosses 60 %, scaling policy fires |
+| Sustained | 240 s | 70 req/s | New instances join, errors drop, CPU stabilizes |
 
-> **Why 70 req/s?** The single instance in `main` saturated at ~30 req/s. With two instances, each
-> handles half the traffic, so 70 req/s puts ~35 req/s on each — just past the single-instance
-> breaking point. Both instances saturate, errors and timeouts return.
+> **Why 240 s sustained?** The ASG needs time to detect high CPU (CloudWatch aggregates over 1–3 min),
+> launch a new instance (~90 s boot + health checks), and register it with the ALB. The 4-minute
+> window is enough to watch the full scale-out play out in real time.
 
 **What to show the audience:**
-1. During *Warm up* — both instances respond fast, 0 errors. The fleet has headroom.
-2. During *Ramp up* — watch both CPUs climb in CloudWatch in parallel. Note how much higher the load gets before errors appear compared to `main`.
-3. During *Saturate* — `ETIMEDOUT` errors return. The fleet hit its ceiling. Adding a third instance manually would only delay the problem — what we need is Auto Scaling.
+1. During *Warm up* — stable responses, 2 instances healthy in the target group.
+2. During *Ramp up* — CPU climbs past 60 %, the ASG scaling policy triggers. Watch **Desired Capacity** increase in CloudWatch.
+3. During *Sustained* — a new instance boots and joins the target group. Artillery error rate drops and latency improves **without any manual action**. That's the key demo moment.
 
 ### 6 — Clean up
 
@@ -158,11 +167,11 @@ terraform destroy
 
 ## Key takeaway for the talk
 
-> A fixed fleet behind an ALB scales linearly — two instances handle twice the load of one.
-> But it still has a hard ceiling. Once every instance is saturated, errors return just like before.
+> With an ASG, the fleet size is no longer a fixed decision made at deploy time.
+> AWS watches CPU continuously and adjusts capacity to match demand — scaling out under load
+> and scaling back in when traffic drops to avoid unnecessary cost.
 >
-> Manually adding more instances is not a strategy — traffic is unpredictable and you can't be
-> watching CloudWatch at 3 AM. The next branch introduces Auto Scaling to let AWS do it automatically.
+> The application didn't change. The infrastructure became elastic.
 
 ---
 
@@ -172,6 +181,6 @@ terraform destroy
 |--------|--------------|
 | `main` | Single EC2, no load balancer |
 | `01-implement-alb` | ALB in front of two fixed EC2s |
-| `02-saturate-alb` | ← you are here — push the fixed fleet past its ceiling |
-| `03-auto-scaling-group` | ASG with CPU-based scaling policy |
+| `02-saturate-alb` | Push the fixed fleet past its ceiling |
+| `03-auto-scaling-group` | ← you are here — ASG with CPU-based scaling policy |
 | `04-right-sizing` | Choosing the right instance type before scaling out |
