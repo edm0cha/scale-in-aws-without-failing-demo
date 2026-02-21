@@ -1,10 +1,11 @@
-# Does my application need balancing? — Auto Scaling Group
+# Does my application need balancing? — Right-Sizing
 
-> **Branch:** `03-auto-scaling-group`
+> **Branch:** `04-right-sizing`
 >
-> An Application Load Balancer fronting an **Auto Scaling Group** of `t2.micro` instances.
-> When CPU exceeds 60 %, AWS automatically launches new instances and registers them with the ALB.
-> When load drops, it terminates the extras. No manual intervention required.
+> The same ASG + ALB infrastructure from `03-auto-scaling-group`, but with a **compute-optimized
+> instance type** (`c5.large`) instead of `t2.micro`.
+> We'll show that scaling out is not always the answer — choosing the right instance family
+> for your workload reduces instance count, eliminates throttling, and improves reliability.
 
 ---
 
@@ -12,20 +13,41 @@
 
 | Path | Purpose |
 |------|---------|
-| `terraform/` | Infrastructure — ASG + Launch Template + ALB + Security Groups in us-east-1 |
-| `app/` | Node.js app source (also embedded in `user-data.sh`) |
-| `load-test/artillery.yml` | Artillery scenario that triggers and observes the ASG scale-out |
+| `terraform/` | Same ASG + ALB infrastructure — only `instance_type` changes |
+| `app/` | Node.js app source (unchanged — same CPU-bound workload) |
+| `load-test/artillery.yml` | Same load test as `03` — identical traffic for a fair comparison |
 
-### The app
+### The workload profile
 
-Two endpoints:
+The `/work` endpoint runs a **synchronous prime sieve** — purely CPU-bound, no I/O, no memory pressure.
 
-| Endpoint | Description |
-|----------|-------------|
-| `GET /health` | Liveness check — returns `200` and the responding `instance` ID |
-| `GET /work` | **Synchronous** prime-number calculation. Blocks the event loop. On a `t2.micro`, each request takes ~300–600 ms. Under concurrent load, CPU climbs and the ASG reacts. |
+| Workload type | Right instance family | Wrong instance family |
+|--------------|----------------------|-----------------------|
+| CPU-bound | `c` (compute-optimized) | `t` (burstable) |
+| Memory-bound | `r` (memory-optimized) | `t`, `c` |
+| I/O / network | `i` (storage), `c` | `t`, `r` |
+
+This app is CPU-bound → `c5.large` is the right fit.
+
+### Why `t2.micro` was wrong
+
+| Property | `t2.micro` | `c5.large` |
+|----------|-----------|-----------|
+| vCPU | 1 | 2 |
+| RAM | 1 GB | 4 GB |
+| CPU model | Shared, burstable | Dedicated, compute-optimized |
+| Throttling | Yes — hard cap at 10 % when credits run out | No — full 100 % always available |
+| Price (us-east-1) | $0.012/hr | $0.085/hr |
+| Reliable req/s | ~15 | ~70+ |
+| Cost per reliable req/s | ~$0.0008 | ~$0.0012 |
+
+`t2.micro` looks cheaper per hour, but once it exhausts its CPU credits it throttles to 10 % — the
+instance is still running and still billing, but effectively useless. `c5.large` delivers consistent
+performance with no surprises.
 
 ### The infrastructure
+
+Identical to `03-auto-scaling-group`:
 
 ```
 Internet
@@ -33,38 +55,10 @@ Internet
     ▼
 Application Load Balancer  (port 80)
     │
-    ├──▶ EC2 instance 1  (port 3000)  ─┐
-    ├──▶ EC2 instance 2  (port 3000)   ├── Auto Scaling Group (min 1 / desired 2 / max 4)
-    └──▶ EC2 instance 3  (port 3000)  ─┘  ← launched automatically when CPU > 60 %
+    └──▶ Auto Scaling Group (min 1 / desired 2 / max 4)
+              ├── c5.large instance 1  (port 3000)
+              └── c5.large instance 2  (port 3000)
 ```
-
-- The ASG starts with **2 instances** (desired capacity).
-- A **target tracking policy** keeps average CPU at or below **60 %** by launching or terminating instances automatically.
-- New instances are bootstrapped via `user-data.sh` and registered with the ALB target group automatically — no manual steps.
-- The ALB health-checks `/health` every 15 s and only routes traffic to healthy targets.
-
-### Scaling policies
-
-**CPU-based (reactive)** — responds to live traffic:
-
-| Setting | Value |
-|---------|-------|
-| Policy type | Target Tracking |
-| Metric | `ASGAverageCPUUtilization` |
-| Target | 60 % |
-| Min instances | 1 |
-| Desired instances | 2 |
-| Max instances | 4 |
-
-**Scheduled (proactive)** — reduces cost during off-hours:
-
-| Action | Time (UTC) | min | desired | Effect |
-|--------|-----------|-----|---------|--------|
-| Scale down | 10 PM daily (`0 22 * * *`) | 0 | 0 | All instances terminated |
-| Scale up | 6 AM daily (`0 6 * * *`) | 1 | 1 | One instance started before peak traffic |
-
-> Both policies coexist. During the day the CPU policy manages reactive scaling between 1–4 instances.
-> At night the scheduled actions override capacity to zero, eliminating idle instance costs entirely.
 
 ---
 
@@ -78,7 +72,20 @@ Application Load Balancer  (port 80)
 
 ## Live demo walkthrough
 
-### 1 — Deploy the infrastructure
+### 1 — Show the only change: `variables.tf`
+
+Open `terraform/variables.tf` and point out the default:
+
+```hcl
+variable "instance_type" {
+  default = "c5.large"   # was "t2.micro" in previous branches
+}
+```
+
+**Talking point:** one line changed. Same app, same infrastructure, same load test. Only the instance
+family changed — from general-purpose burstable to compute-optimized.
+
+### 2 — Deploy
 
 ```bash
 cd terraform
@@ -86,58 +93,33 @@ terraform init
 terraform apply
 ```
 
-Note the outputs:
+Outputs:
 
 ```
-asg_name     = "scale-demo-asg"
-alb_dns_name = "scale-demo-alb-1234567890.us-east-1.elb.amazonaws.com"
-app_url      = "http://scale-demo-alb-1234567890.us-east-1.elb.amazonaws.com"
+asg_name      = "scale-demo-asg"
+instance_type = "c5.large"
+app_url       = "http://scale-demo-alb-1234567890.us-east-1.elb.amazonaws.com"
 ```
 
-### 2 — Wait for the initial instances to start (~90 s)
-
-Both instances launched by the ASG run `user-data.sh` on first boot to install Node.js and start the app via PM2. The ALB waits for each target to pass 2 consecutive health checks before sending traffic.
+### 3 — Wait for the initial instances to start (~90 s)
 
 ```bash
-# Poll until you get a 200 through the ALB
 curl $(terraform output -raw health_url)
 # {"status":"ok","instance":"i-0abc..."}
 ```
 
-### 3 — Show the ASG and ALB in the console
+### 4 — Open CloudWatch — compare both branches side by side
 
-**EC2 → Auto Scaling Groups → `scale-demo-asg`:**
-- Check the **Activity** tab — shows instance launches and terminations.
-- Check the **Instance management** tab — shows all running instances and their health status.
-
-**EC2 → Load Balancers → Target Groups → `scale-demo-tg`:**
-- All initial instances should show **healthy**.
-
-```bash
-# Hit /health a few times to see the ALB rotating across instances
-curl "$(terraform output -raw health_url)"
-# {"status":"ok","instance":"i-0abc..."}   ← instance 1
-
-curl "$(terraform output -raw health_url)"
-# {"status":"ok","instance":"i-0xyz..."}   ← instance 2
-```
-
-### 4 — Open CloudWatch in the console
-
-AWS Console → EC2 → Auto Scaling Groups → `scale-demo-asg` → **Monitoring** tab.
+Open two browser tabs:
+- `03-auto-scaling-group` CloudWatch graph (screenshot or live if still running)
+- `04-right-sizing` CloudWatch graph (live)
 
 Metrics to watch:
-- **Group In Service Instances** — will increase as the ASG scales out
-- **Group Desired Capacity** — rises when the policy fires
-- **CPUUtilization (per instance)** — climbs during load, drops as new instances join
+- **CPUUtilization per instance** — should stay lower per instance on `c5.large`
+- **Group In Service Instances** — should plateau at 2 instead of climbing to 4
+- **Group Desired Capacity** — minimal scaling activity expected
 
-> **Caveat — T2 CPU credit throttling**
->
-> `t2.*` instances use a **credit-based bursting model**. Once credits are exhausted, AWS throttles
-> the vCPU to 10 % at the hypervisor level. All instances in this demo have `cpu_credits = "unlimited"`
-> configured in the launch template, which disables throttling and lets CPU reach 100 % freely.
-
-### 5 — Run the load test
+### 5 — Run the same load test
 
 ```bash
 cd ../load-test
@@ -151,24 +133,40 @@ artillery run artillery.yml --output report.json
 artillery report report.json
 ```
 
-Artillery runs three phases designed to trigger and observe the ASG scale-out:
+Same three phases as `03`:
 
-| Phase | Duration | Rate | What to expect |
-|-------|----------|------|----------------|
-| Warm up | 30 s | 5 req/s | Low CPU, 0 errors, 2 instances serving |
-| Ramp up | 60 s | 5 → 70 req/s | CPU crosses 60 %, scaling policy fires |
-| Sustained | 240 s | 70 req/s | New instances join, errors drop, CPU stabilizes |
-
-> **Why 240 s sustained?** The ASG needs time to detect high CPU (CloudWatch aggregates over 1–3 min),
-> launch a new instance (~90 s boot + health checks), and register it with the ALB. The 4-minute
-> window is enough to watch the full scale-out play out in real time.
+| Phase | Duration | Rate |
+|-------|----------|------|
+| Warm up | 30 s | 5 req/s |
+| Ramp up | 60 s | 5 → 70 req/s |
+| Sustained | 240 s | 70 req/s |
 
 **What to show the audience:**
-1. During *Warm up* — stable responses, 2 instances healthy in the target group.
-2. During *Ramp up* — CPU climbs past 60 %, the ASG scaling policy triggers. Watch **Desired Capacity** increase in CloudWatch.
-3. During *Sustained* — a new instance boots and joins the target group. Artillery error rate drops and latency improves **without any manual action**. That's the key demo moment.
 
-### 6 — Clean up
+1. During *Warm up* — identical to `03`. No surprises at low load.
+2. During *Ramp up* — CPU climbs, but each `c5.large` handles more req/s before hitting 60 %. The ASG fires later (or not at all) compared to `t2.micro`.
+3. During *Sustained* — compare the Artillery report to `03`:
+
+| Metric | `t2.micro` (branch 03) | `c5.large` (branch 04) |
+|--------|----------------------|----------------------|
+| Instances at peak | 3–4 | 1–2 |
+| `ETIMEDOUT` errors | Many | Few or none |
+| p99 latency | ~9 s | < 1 s |
+| ASG scale-out events | Multiple | 0–1 |
+
+### 6 — Show how to switch instance types without changing anything else
+
+The instance type is the only variable. You can override it at apply time:
+
+```bash
+# Try a memory-optimized instance (not ideal for this workload — for illustration)
+terraform apply -var="instance_type=r6i.large"
+
+# Try a newer-gen compute-optimized instance
+terraform apply -var="instance_type=c6i.large"
+```
+
+### 7 — Clean up
 
 ```bash
 cd ../terraform
@@ -179,11 +177,13 @@ terraform destroy
 
 ## Key takeaway for the talk
 
-> With an ASG, the fleet size is no longer a fixed decision made at deploy time.
-> AWS watches CPU continuously and adjusts capacity to match demand — scaling out under load
-> and scaling back in when traffic drops to avoid unnecessary cost.
+> Before you scale out, ask: **is this the right instance type for my workload?**
 >
-> The application didn't change. The infrastructure became elastic.
+> A CPU-bound app on a burstable `t2` instance will throttle under load no matter how many instances
+> you add. One correctly-sized `c5.large` outperforms four throttled `t2.micro` instances — with
+> fewer moving parts, simpler operations, and more predictable costs.
+>
+> Right-sizing is not about spending more. It's about spending on the right thing.
 
 ---
 
@@ -194,5 +194,5 @@ terraform destroy
 | `main` | Single EC2, no load balancer |
 | `01-implement-alb` | ALB in front of two fixed EC2s |
 | `02-saturate-alb` | Push the fixed fleet past its ceiling |
-| `03-auto-scaling-group` | ← you are here — ASG with CPU-based scaling policy |
-| `04-right-sizing` | Choosing the right instance type before scaling out |
+| `03-auto-scaling-group` | ASG with CPU-based scaling policy |
+| `04-right-sizing` | ← you are here — compute-optimized instance type |
