@@ -31,12 +31,29 @@ const http = require('http')
 const app = express()
 const PORT = 3000
 
-let instanceId = 'unknown'
-http.get('http://169.254.169.254/latest/meta-data/instance-id', (res) => {
-  let data = ''
-  res.on('data', (chunk) => { data += chunk })
-  res.on('end', () => { instanceId = data.trim() })
-}).on('error', () => {})
+let instanceId = 'local'
+const tokenReq = http.request({
+  hostname: '169.254.169.254',
+  path: '/latest/api/token',
+  method: 'PUT',
+  headers: { 'X-aws-ec2-metadata-token-ttl-seconds': '21600' }
+}, (tokenRes) => {
+  let token = ''
+  tokenRes.on('data', (chunk) => { token += chunk })
+  tokenRes.on('end', () => {
+    http.get({
+      hostname: '169.254.169.254',
+      path: '/latest/meta-data/instance-id',
+      headers: { 'X-aws-ec2-metadata-token': token.trim() }
+    }, (res) => {
+      let data = ''
+      res.on('data', (chunk) => { data += chunk })
+      res.on('end', () => { instanceId = data.trim() })
+    }).on('error', () => {})
+  })
+})
+tokenReq.on('error', () => {})
+tokenReq.end()
 
 function calculatePrimes(limit) {
   const primes = []

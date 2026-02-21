@@ -1,9 +1,9 @@
-# Does my application need balancing? — Demo Branch 1
+# Does my application need balancing? — ALB + Fixed Fleet
 
-> **Branch:** `main`
+> **Branch:** `feat/1-implement-alb`
 >
-> A single `t2.micro` EC2, no load balancer, no Auto Scaling.
-> We'll show how quickly a modest amount of traffic saturates it.
+> Two `t2.micro` EC2 instances behind an Application Load Balancer, no Auto Scaling.
+> We'll show how distributing traffic across two instances reduces saturation compared to a single server.
 
 ---
 
@@ -11,9 +11,9 @@
 
 | Path | Purpose |
 |------|---------|
-| `terraform/` | Infrastructure — EC2 + Security Group in us-east-1 |
+| `terraform/` | Infrastructure — 2× EC2 + ALB + Security Groups in us-east-1 |
 | `app/` | Node.js app source (also embedded in `user-data.sh`) |
-| `load-test/artillery.yml` | Artillery scenario that ramps traffic until the instance breaks |
+| `load-test/artillery.yml` | Artillery scenario that ramps traffic until the fleet breaks |
 
 ### The app
 
@@ -21,8 +21,24 @@ Two endpoints:
 
 | Endpoint | Description |
 |----------|-------------|
-| `GET /health` | Liveness check — fast, always returns `200` |
+| `GET /health` | Liveness check — returns `200` and the responding `instance` ID |
 | `GET /work` | **Synchronous** prime-number calculation. Blocks the event loop. On a `t2.micro`, each request takes ~300–600 ms. Under concurrent load, requests queue up, CPU hits 100 %, and response times explode. |
+
+### The infrastructure
+
+```
+Internet
+    │
+    ▼
+Application Load Balancer  (port 80)
+    │
+    ├──▶ EC2 instance 1  (port 3000)
+    └──▶ EC2 instance 2  (port 3000)
+```
+
+- The ALB round-robins requests across both instances.
+- Each instance handles ~half the load, so CPU per instance stays lower.
+- The ALB health-checks `/health` every 15 s and stops routing to any instance that fails.
 
 ---
 
@@ -47,37 +63,49 @@ terraform apply
 Note the outputs — you'll need `app_url`:
 
 ```
-app_url = "http://1.2.3.4:3000"
+alb_dns_name  = "scale-demo-alb-1234567890.us-east-1.elb.amazonaws.com"
+app_url       = "http://scale-demo-alb-1234567890.us-east-1.elb.amazonaws.com"
+instance_id   = "i-0abc..."
+instance_id_2 = "i-0xyz..."
 ```
 
-### 2 — Wait for the app to start (~90 s)
+### 2 — Wait for both instances to start (~90 s)
 
-The instance runs `user-data.sh` on first boot to install Node.js and start the app via PM2.
+Both instances run `user-data.sh` on first boot to install Node.js and start the app via PM2.
+The ALB waits for each target to pass 2 consecutive health checks before sending traffic to it.
 
 ```bash
-# Poll until you get a 200
+# Poll until you get a 200 through the ALB
 curl $(terraform output -raw health_url)
 # {"status":"ok","instance":"i-0abc..."}
 ```
 
-### 3 — Show a single request working fine
+### 3 — Show the ALB distributing requests across both instances
+
+```bash
+curl "$(terraform output -raw health_url)"
+# {"status":"ok","instance":"i-0abc..."}   ← instance 1
+
+curl "$(terraform output -raw health_url)"
+# {"status":"ok","instance":"i-0xyz..."}   ← instance 2
+```
+
+**Talking point:** the `instance` field alternates — the ALB is splitting traffic across both servers.
 
 ```bash
 curl "$(terraform output -raw work_url)"
 # {"instance":"i-0abc...","limit":20000,"primesFound":2262,"elapsed":"312ms"}
 ```
 
-**Talking point:** one request, one vCPU, ~300 ms. Feels fine.
-
 ### 4 — Open CloudWatch in the console
 
-AWS Console → EC2 → Instances → select the instance → **Monitoring** tab.
+AWS Console → EC2 → Instances → select **both** instances → **Monitoring** tab.
 
 > Enable **detailed monitoring** if you want 1-minute granularity (already enabled by Terraform).
 
-Metrics to watch:
-- **CPUUtilization** — will peg at 100 %
-- **NetworkIn / NetworkOut** — will spike
+Metrics to watch on each instance:
+- **CPUUtilization** — both instances share the load, so CPU climbs slower than on a single server
+- **NetworkIn / NetworkOut** — will spike on both
 
 > **Caveat — T2 CPU credit throttling**
 >
@@ -85,7 +113,7 @@ Metrics to watch:
 >
 > This means CloudWatch may show a surprisingly low CPU percentage (e.g. 10–20 %) even while the server is completely saturated and returning timeouts. The instance isn't idle — it's being throttled.
 >
-> If you want to see CPU spike cleanly to 100 %, switch to a `t3.micro` (unlimited burst by default) in `terraform/variables.tf`. The saturation behavior will be the same, but the CloudWatch graph will be more dramatic and easier to explain to an audience.
+> Both instances have `cpu_credits = "unlimited"` configured in Terraform, which disables this throttling and allows CPU to reach 100 % freely.
 
 ### 5 — Run the load test
 
@@ -95,7 +123,10 @@ export TARGET_URL=$(cd ../terraform && terraform output -raw app_url)
 artillery run artillery.yml
 
 # Save results to JSON for later analysis
-artillery run artillery.yml --output report.json 
+artillery run artillery.yml --output report.json
+
+# Generate an HTML report from the JSON output
+artillery report report.json
 ```
 
 Artillery runs three phases:
@@ -108,8 +139,8 @@ Artillery runs three phases:
 
 **What to show the audience:**
 1. During *Warm up* — response times are stable (~300–500 ms), 0 errors.
-2. During *Ramp up* — watch CloudWatch CPU climb toward 100 %.
-3. During *Sustained* — Artillery starts reporting `ETIMEDOUT` / `5xx` errors. The instance is saturated.
+2. During *Ramp up* — watch CloudWatch CPU climb on both instances, but slower than before.
+3. During *Sustained* — compare error rate and p99 latency to the `main` branch results. Both instances are sharing the load, so the fleet handles more traffic before degrading.
 
 ### 6 — Clean up
 
@@ -122,11 +153,11 @@ terraform destroy
 
 ## Key takeaway for the talk
 
-> A single small instance can handle light, predictable traffic just fine.
-> The moment traffic becomes concurrent or spiky, it fails — and there's nothing
-> to absorb or distribute the load.
+> Adding a second instance behind an ALB doubles the capacity of the fleet.
+> Response times improve and errors drop because each server handles half the requests.
 >
-> That's the problem the next branches will solve.
+> But the fleet size is still **fixed** — if traffic keeps growing, both instances will eventually
+> saturate. That's the problem the next branch solves with Auto Scaling.
 
 ---
 
@@ -134,7 +165,7 @@ terraform destroy
 
 | Branch | What it adds |
 |--------|--------------|
-| `01-single-ec2-no-scaling` | ← you are here |
-| `02-elb-fixed-fleet` | ALB in front of two fixed EC2s |
+| `main` | Single EC2, no load balancer |
+| `feat/1-implement-alb` | ← you are here — ALB in front of two fixed EC2s |
 | `03-auto-scaling-group` | ASG with CPU-based scaling policy |
 | `04-right-sizing` | Choosing the right instance type before scaling out |

@@ -10,6 +10,7 @@ yarn-error.log*
 *.tfstate
 *.tfstate.backup
 *.tfstate.*.backup
+*.tfstate.*.info
 *.tfplan
 *.tfvars
 crash.log
