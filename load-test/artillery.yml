@@ -5,21 +5,21 @@ config:
   target: "{{ $env.TARGET_URL }}"
 
   phases:
-    # Phase 1 — baseline: prove the app works fine at low load
+    # Phase 1 — baseline: prove the two-instance fleet handles low load with ease
     - name: "Warm up"
       duration: 30
-      arrivalRate: 1
+      arrivalRate: 5
 
-    # Phase 2 — ramp: watch CPU climb in CloudWatch
+    # Phase 2 — ramp: both CPUs climb steadily; watch CloudWatch for each instance
     - name: "Ramp up"
-      duration: 60
-      arrivalRate: 1
-      rampTo: 30
-
-    # Phase 3 — sustained pressure: response times spike, errors appear
-    - name: "Sustained load"
       duration: 90
-      arrivalRate: 30
+      arrivalRate: 5
+      rampTo: 70
+
+    # Phase 3 — saturation: ~35 req/s per instance, past the single-instance breaking point
+    - name: "Saturate"
+      duration: 120
+      arrivalRate: 70
 
   # Report latency percentiles
   plugins:

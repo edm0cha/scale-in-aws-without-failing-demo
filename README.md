@@ -1,9 +1,10 @@
-# Does my application need balancing? — ALB + Fixed Fleet
+# Does my application need balancing? — Saturating the ALB Fleet
 
-> **Branch:** `feat/1-implement-alb`
+> **Branch:** `02-saturate-alb`
 >
 > Two `t2.micro` EC2 instances behind an Application Load Balancer, no Auto Scaling.
-> We'll show how distributing traffic across two instances reduces saturation compared to a single server.
+> We'll prove that a fixed fleet has a hard ceiling — double the instances, double the breaking point,
+> but it still breaks. The solution requires Auto Scaling.
 
 ---
 
@@ -129,18 +130,22 @@ artillery run artillery.yml --output report.json
 artillery report report.json
 ```
 
-Artillery runs three phases:
+Artillery runs three phases designed to push past the two-instance ceiling:
 
-| Phase | Duration | Rate |
-|-------|----------|------|
-| Warm up | 30 s | 1 req/s |
-| Ramp up | 60 s | 1 → 30 req/s |
-| Sustained | 90 s | 30 req/s |
+| Phase | Duration | Rate | Per instance |
+|-------|----------|------|--------------|
+| Warm up | 30 s | 5 req/s | ~2.5 req/s — comfortable |
+| Ramp up | 90 s | 5 → 70 req/s | ~2.5 → 35 req/s — climbing |
+| Saturate | 120 s | 70 req/s | ~35 req/s — past breaking point |
+
+> **Why 70 req/s?** The single instance in `main` saturated at ~30 req/s. With two instances, each
+> handles half the traffic, so 70 req/s puts ~35 req/s on each — just past the single-instance
+> breaking point. Both instances saturate, errors and timeouts return.
 
 **What to show the audience:**
-1. During *Warm up* — response times are stable (~300–500 ms), 0 errors.
-2. During *Ramp up* — watch CloudWatch CPU climb on both instances, but slower than before.
-3. During *Sustained* — compare error rate and p99 latency to the `main` branch results. Both instances are sharing the load, so the fleet handles more traffic before degrading.
+1. During *Warm up* — both instances respond fast, 0 errors. The fleet has headroom.
+2. During *Ramp up* — watch both CPUs climb in CloudWatch in parallel. Note how much higher the load gets before errors appear compared to `main`.
+3. During *Saturate* — `ETIMEDOUT` errors return. The fleet hit its ceiling. Adding a third instance manually would only delay the problem — what we need is Auto Scaling.
 
 ### 6 — Clean up
 
@@ -153,11 +158,11 @@ terraform destroy
 
 ## Key takeaway for the talk
 
-> Adding a second instance behind an ALB doubles the capacity of the fleet.
-> Response times improve and errors drop because each server handles half the requests.
+> A fixed fleet behind an ALB scales linearly — two instances handle twice the load of one.
+> But it still has a hard ceiling. Once every instance is saturated, errors return just like before.
 >
-> But the fleet size is still **fixed** — if traffic keeps growing, both instances will eventually
-> saturate. That's the problem the next branch solves with Auto Scaling.
+> Manually adding more instances is not a strategy — traffic is unpredictable and you can't be
+> watching CloudWatch at 3 AM. The next branch introduces Auto Scaling to let AWS do it automatically.
 
 ---
 
@@ -166,6 +171,7 @@ terraform destroy
 | Branch | What it adds |
 |--------|--------------|
 | `main` | Single EC2, no load balancer |
-| `feat/1-implement-alb` | ← you are here — ALB in front of two fixed EC2s |
+| `01-implement-alb` | ALB in front of two fixed EC2s |
+| `02-saturate-alb` | ← you are here — push the fixed fleet past its ceiling |
 | `03-auto-scaling-group` | ASG with CPU-based scaling policy |
 | `04-right-sizing` | Choosing the right instance type before scaling out |
