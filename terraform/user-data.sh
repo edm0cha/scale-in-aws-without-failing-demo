@@ -31,7 +31,8 @@ const http = require('http')
 const app = express()
 const PORT = 3000
 
-let instanceId = 'local'
+let instanceId = 'unknown'
+// IMDSv2: first PUT to get a session token, then GET the instance-id with it
 const tokenReq = http.request({
   hostname: '169.254.169.254',
   path: '/latest/api/token',
