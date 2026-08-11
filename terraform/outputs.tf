@@ -3,6 +3,11 @@ output "asg_name" {
   value       = aws_autoscaling_group.app.name
 }
 
+output "instance_type" {
+  description = "EC2 instance type used by the launch template"
+  value       = var.instance_type
+}
+
 output "alb_dns_name" {
   description = "DNS name of the Application Load Balancer"
   value       = aws_lb.app.dns_name
