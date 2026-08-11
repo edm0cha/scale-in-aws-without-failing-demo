@@ -65,7 +65,7 @@ resource "aws_security_group" "app" {
 # ─── Launch Template ──────────────────────────────────────────────────────────
 
 resource "aws_launch_template" "app" {
-  name_prefix   = "${var.app_name}-"
+  name_prefix   = "${local.short_name}-"
   image_id      = data.aws_ami.amazon_linux_2023.id
   instance_type = var.instance_type
 
@@ -81,14 +81,45 @@ resource "aws_launch_template" "app" {
     cpu_credits = "unlimited"
   }
 
-  tags = {
-    Name = local.short_name
+  user_data = base64encode(file("${path.module}/user-data.sh"))
+
+  tag_specifications {
+    resource_type = "instance"
+    tags = {
+      Name = var.app_name
+    }
+  }
+}
+
+# ─── Auto Scaling Group ───────────────────────────────────────────────────────
+
+resource "aws_autoscaling_group" "app" {
+  name                      = "${local.short_name}-asg"
+  min_size                  = 1
+  max_size                  = 4
+  desired_capacity          = 2
+  vpc_zone_identifier       = data.aws_subnets.default.ids
+  health_check_type         = "ELB"
+  health_check_grace_period = 120
+
+  launch_template {
+    id      = aws_launch_template.app.id
+    version = "$Latest"
+  }
+
+  # Register instances with the ALB target group automatically
+  target_group_arns = [aws_lb_target_group.app.arn]
+
+  tag {
+    key                 = "Name"
+    value               = local.short_name
+    propagate_at_launch = true
   }
 }
 
 # CPU-based target tracking policy — scale out when average CPU exceeds 60 %
 resource "aws_autoscaling_policy" "cpu" {
-  name                   = "${var.app_name}-cpu-policy"
+  name                   = "${local.short_name}-cpu-policy"
   autoscaling_group_name = aws_autoscaling_group.app.name
   policy_type            = "TargetTrackingScaling"
 
@@ -106,7 +137,7 @@ resource "aws_autoscaling_policy" "cpu" {
 # 10 PM UTC — scale fleet to 0 (night hours, no traffic expected)
 # min_size must also be set to 0, otherwise the ASG will not go below its minimum
 resource "aws_autoscaling_schedule" "scale_down_night" {
-  scheduled_action_name  = "${var.app_name}-scale-down-night"
+  scheduled_action_name  = "${local.short_name}-scale-down-night"
   autoscaling_group_name = aws_autoscaling_group.app.name
   recurrence             = "0 22 * * *"
   time_zone              = "UTC"
@@ -117,7 +148,7 @@ resource "aws_autoscaling_schedule" "scale_down_night" {
 
 # 6 AM UTC — bring 1 instance back online (morning warm-up before peak traffic)
 resource "aws_autoscaling_schedule" "scale_up_morning" {
-  scheduled_action_name  = "${var.app_name}-scale-up-morning"
+  scheduled_action_name  = "${local.short_name}-scale-up-morning"
   autoscaling_group_name = aws_autoscaling_group.app.name
   recurrence             = "0 6 * * *"
   time_zone              = "UTC"
@@ -156,38 +187,6 @@ resource "aws_lb_target_group" "app" {
   tags = {
     Name = "${local.short_name}-tg"
   }
-}
-
-resource "aws_instance" "app2" {
-  ami                         = data.aws_ami.amazon_linux_2023.id
-  instance_type               = var.instance_type
-  vpc_security_group_ids      = [aws_security_group.app.id]
-  associate_public_ip_address = true
-
-  monitoring = true
-
-  user_data                   = file("${path.module}/user-data.sh")
-  user_data_replace_on_change = true
-
-  credit_specification {
-    cpu_credits = "unlimited"
-  }
-
-  tags = {
-    Name = "${local.short_name}-2"
-  }
-}
-
-resource "aws_lb_target_group_attachment" "app" {
-  target_group_arn = aws_lb_target_group.app.arn
-  target_id        = aws_instance.app.id
-  port             = 3000
-}
-
-resource "aws_lb_target_group_attachment" "app2" {
-  target_group_arn = aws_lb_target_group.app.arn
-  target_id        = aws_instance.app2.id
-  port             = 3000
 }
 
 resource "aws_lb_listener" "http" {
