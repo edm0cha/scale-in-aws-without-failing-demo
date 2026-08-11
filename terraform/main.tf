@@ -2,7 +2,7 @@
 
 # ALB — accepts HTTP on port 80 from the internet
 resource "aws_security_group" "alb" {
-  name        = "${var.app_name}-alb-sg"
+  name        = "${local.short_name}-alb-sg"
   description = "Allow HTTP inbound to ALB"
   vpc_id      = data.aws_vpc.default.id
 
@@ -22,13 +22,13 @@ resource "aws_security_group" "alb" {
   }
 
   tags = {
-    Name = "${var.app_name}-alb-sg"
+    Name = "${local.short_name}-alb-sg"
   }
 }
 
 # EC2 — accepts app traffic from the ALB and SSH from anywhere
 resource "aws_security_group" "app" {
-  name        = "${var.app_name}-sg"
+  name        = "${local.short_name}-sg"
   description = "Allow HTTP app traffic and SSH"
   vpc_id      = data.aws_vpc.default.id
 
@@ -58,7 +58,7 @@ resource "aws_security_group" "app" {
   }
 
   tags = {
-    Name = "${var.app_name}-sg"
+    Name = "${local.short_name}-sg"
   }
 }
 
@@ -83,7 +83,7 @@ resource "aws_instance" "app" {
   }
 
   tags = {
-    Name = var.app_name
+    Name = local.short_name
   }
 }
 
@@ -97,7 +97,7 @@ resource "aws_lb" "app" {
   subnets            = data.aws_subnets.default.ids
 
   tags = {
-    Name = "${var.app_name}-alb"
+    Name = "${local.short_name}-alb"
   }
 }
 
@@ -115,7 +115,7 @@ resource "aws_lb_target_group" "app" {
   }
 
   tags = {
-    Name = "${var.app_name}-tg"
+    Name = "${local.short_name}-tg"
   }
 }
 
@@ -135,7 +135,7 @@ resource "aws_instance" "app2" {
   }
 
   tags = {
-    Name = "${var.app_name}-2"
+    Name = "${local.short_name}-2"
   }
 }
 
