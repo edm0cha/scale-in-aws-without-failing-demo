@@ -62,6 +62,37 @@ resource "aws_security_group" "app" {
   }
 }
 
+# ─── IAM (instance role) ──────────────────────────────────────────────────────
+# Lets the CloudWatch Agent on each instance publish memory metrics — CPU
+# utilization is available for free from the hypervisor, memory is not.
+
+data "aws_iam_policy_document" "ec2_assume" {
+  statement {
+    effect  = "Allow"
+    actions = ["sts:AssumeRole"]
+
+    principals {
+      type        = "Service"
+      identifiers = ["ec2.amazonaws.com"]
+    }
+  }
+}
+
+resource "aws_iam_role" "app" {
+  name               = "${local.short_name}-app-role"
+  assume_role_policy = data.aws_iam_policy_document.ec2_assume.json
+}
+
+resource "aws_iam_role_policy_attachment" "cloudwatch_agent" {
+  role       = aws_iam_role.app.name
+  policy_arn = "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy"
+}
+
+resource "aws_iam_instance_profile" "app" {
+  name = "${local.short_name}-app-profile"
+  role = aws_iam_role.app.name
+}
+
 # ─── Launch Template ──────────────────────────────────────────────────────────
 
 resource "aws_launch_template" "app" {
@@ -70,6 +101,10 @@ resource "aws_launch_template" "app" {
   instance_type = var.instance_type
 
   vpc_security_group_ids = [aws_security_group.app.id]
+
+  iam_instance_profile {
+    name = aws_iam_instance_profile.app.name
+  }
 
   # Enable detailed (1-minute) CloudWatch metrics so spikes show up fast
   monitoring {
@@ -118,6 +153,7 @@ resource "aws_autoscaling_group" "app" {
 }
 
 # CPU-based target tracking policy — scale out when average CPU exceeds 60 %
+# See README "Why these thresholds?" for how 60 % was derived from load-test data.
 resource "aws_autoscaling_policy" "cpu" {
   name                   = "${local.short_name}-cpu-policy"
   autoscaling_group_name = aws_autoscaling_group.app.name
@@ -128,6 +164,32 @@ resource "aws_autoscaling_policy" "cpu" {
       predefined_metric_type = "ASGAverageCPUUtilization"
     }
     target_value = 60.0
+  }
+}
+
+# Memory-based target tracking policy — safety net, not the primary lever for
+# this CPU-bound workload. Reads mem_used_percent published by the CloudWatch
+# Agent (namespace "CWAgent", see user-data.sh) under the ASG's own dimension.
+# The ASG scales to satisfy whichever of the CPU or memory policies asks for
+# more capacity — they coexist, they don't override each other.
+resource "aws_autoscaling_policy" "memory" {
+  name                   = "${local.short_name}-memory-policy"
+  autoscaling_group_name = aws_autoscaling_group.app.name
+  policy_type            = "TargetTrackingScaling"
+
+  target_tracking_configuration {
+    customized_metric_specification {
+      metric_name = "mem_used_percent"
+      namespace   = "CWAgent"
+      statistic   = "Average"
+      unit        = "Percent"
+
+      metric_dimension {
+        name  = "AutoScalingGroupName"
+        value = aws_autoscaling_group.app.name
+      }
+    }
+    target_value = 75.0
   }
 }
 
