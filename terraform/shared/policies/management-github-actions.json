@@ -14,6 +14,16 @@
         "arn:aws:s3:::shared-superlab-${project_name}-tfstate",
         "arn:aws:s3:::shared-superlab-${project_name}-tfstate/*"
       ]
+    },
+    {
+      "Sid": "TerraformStateBuckets",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeImages"
+      ],
+      "Resource": [
+        "*"
+      ]
     }
   ]
 }
