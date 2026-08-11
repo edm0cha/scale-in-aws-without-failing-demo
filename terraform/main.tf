@@ -1,5 +1,5 @@
 resource "aws_security_group" "app" {
-  name        = "${var.app_name}-sg"
+  name        = "${local.short_name}-sg"
   description = "Allow HTTP app traffic and SSH"
 
   # SSH — for live debugging during the demo
@@ -28,7 +28,7 @@ resource "aws_security_group" "app" {
   }
 
   tags = {
-    Name = "${var.app_name}-sg"
+    Name = "${local.short_name}-sg"
   }
 }
 
@@ -53,6 +53,6 @@ resource "aws_instance" "app" {
   }
 
   tags = {
-    Name = var.app_name
+    Name = local.short_name
   }
 }
