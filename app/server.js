@@ -3,13 +3,31 @@ const http = require('http')
 const app = express()
 const PORT = 3000
 
-// Fetch instance metadata (only works on EC2; falls back to 'local' elsewhere)
+// Fetch instance ID using IMDSv2 (required on Amazon Linux 2023)
+// Step 1: PUT to get a session token, then Step 2: GET the instance ID with that token
 let instanceId = 'local'
-http.get('http://169.254.169.254/latest/meta-data/instance-id', (res) => {
-  let data = ''
-  res.on('data', (chunk) => { data += chunk })
-  res.on('end', () => { instanceId = data.trim() })
-}).on('error', () => { /* running locally, keep default */ })
+const tokenReq = http.request({
+  hostname: '169.254.169.254',
+  path: '/latest/api/token',
+  method: 'PUT',
+  headers: { 'X-aws-ec2-metadata-token-ttl-seconds': '21600' }
+}, (tokenRes) => {
+  let token = ''
+  tokenRes.on('data', (chunk) => { token += chunk })
+  tokenRes.on('end', () => {
+    http.get({
+      hostname: '169.254.169.254',
+      path: '/latest/meta-data/instance-id',
+      headers: { 'X-aws-ec2-metadata-token': token.trim() }
+    }, (res) => {
+      let data = ''
+      res.on('data', (chunk) => { data += chunk })
+      res.on('end', () => { instanceId = data.trim() })
+    }).on('error', () => { /* running locally, keep default */ })
+  })
+})
+tokenReq.on('error', () => { /* running locally, keep default */ })
+tokenReq.end()
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
