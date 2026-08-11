@@ -13,7 +13,7 @@ terraform {
   }
 
   backend "s3" {
-    bucket  = "shared-superlab-awsugcdmx-tfstate"
+    bucket  = "shared-superlab-scale-in-aws-without-failing-demo-tfstate"
     key     = "shared/terraform.tfstate"
     region  = "us-east-1"
     encrypt = true
