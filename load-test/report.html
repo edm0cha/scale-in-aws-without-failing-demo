@@ -1,0 +1,592 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Artillery Load Test Report</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    color-scheme: light;
+    --surface-1:      #fcfcfb;
+    --page:           #f9f9f7;
+    --text-primary:   #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted:     #898781;
+    --grid:           #e1e0d9;
+    --baseline:       #c3c2b7;
+    --border:         rgba(11,11,11,0.10);
+    --good:           #0ca30c;
+    --warning:        #fab219;
+    --serious:        #ec835a;
+    --critical:       #d03b3b;
+    --series-1:       #2a78d6; /* p50 */
+    --series-2:       #eb6834; /* p95 */
+    --series-3:       #1baf7a; /* p99 */
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --surface-1:      #1a1a19;
+      --page:           #0d0d0d;
+      --text-primary:   #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted:     #898781;
+      --grid:           #2c2c2a;
+      --baseline:       #383835;
+      --border:         rgba(255,255,255,0.10);
+      --good:           #0ca30c;
+      --warning:        #fab219;
+      --serious:        #ec835a;
+      --critical:       #d03b3b;
+      --series-1:       #3987e5;
+      --series-2:       #d95926;
+      --series-3:       #199e70;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--page);
+    color: var(--text-primary);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 32px 20px 64px; }
+
+  header h1 { font-size: 22px; margin: 0 0 4px; }
+  header .sub { color: var(--text-secondary); font-size: 14px; margin: 0 0 20px; }
+
+  .controls {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 12px 14px; margin-bottom: 24px;
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px;
+  }
+  .controls button, .controls label.filebtn {
+    font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
+    background: transparent; color: var(--text-primary);
+    border: 1px solid var(--border); border-radius: 6px; padding: 6px 12px;
+  }
+  .controls button:hover, .controls label.filebtn:hover { background: var(--grid); }
+  #fileInput { display: none; }
+  #status { font-size: 13px; color: var(--text-secondary); }
+
+  section { margin-bottom: 28px; }
+  .card {
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px;
+    padding: 18px 20px;
+  }
+  .card h2 { font-size: 15px; margin: 0 0 2px; }
+  .card .card-sub { font-size: 12px; color: var(--text-muted); margin: 0 0 14px; }
+
+  .stats { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; }
+  @media (max-width: 900px) { .stats { grid-template-columns: repeat(3, 1fr); } }
+  @media (max-width: 560px) { .stats { grid-template-columns: repeat(2, 1fr); } }
+  .tile {
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px;
+    padding: 14px 14px;
+  }
+  .tile .label { font-size: 12px; color: var(--text-secondary); margin-bottom: 6px; }
+  .tile .value { font-size: 24px; font-weight: 600; }
+  .tile .value.good { color: var(--good); }
+  .tile .value.critical { color: var(--critical); }
+
+  .chart-scroll { overflow-x: auto; }
+  svg.chart { width: 100%; min-width: 560px; height: auto; display: block; }
+  .gridline { stroke: var(--grid); stroke-width: 1; }
+  .baseline { stroke: var(--baseline); stroke-width: 1; }
+  .axis-label { fill: var(--text-muted); font-size: 11px; }
+  .legend { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 10px; font-size: 12px; color: var(--text-secondary); }
+  .legend .item { display: flex; align-items: center; gap: 6px; }
+  .legend .swatch-line { width: 14px; height: 2px; border-radius: 1px; display: inline-block; }
+  .legend .swatch-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+
+  .tooltip {
+    position: absolute; pointer-events: none; z-index: 5;
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px;
+    padding: 8px 10px; font-size: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+    visibility: hidden; white-space: nowrap;
+  }
+  .tooltip .t-title { color: var(--text-muted); margin-bottom: 4px; }
+  .tooltip .t-row { display: flex; align-items: center; gap: 6px; }
+  .tooltip .t-row .key { width: 12px; height: 2px; border-radius: 1px; }
+  .tooltip .t-row .val { font-weight: 600; color: var(--text-primary); margin-left: auto; padding-left: 10px; }
+  .tooltip .t-row .name { color: var(--text-secondary); }
+  .chart-wrap { position: relative; }
+
+  .toggle-table { font-size: 12px; color: var(--text-secondary); background: none; border: none;
+    text-decoration: underline; cursor: pointer; padding: 0; margin-top: 10px; }
+  table.data-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 10px; display: none; }
+  table.data-table.show { display: table; }
+  table.data-table th, table.data-table td {
+    text-align: right; padding: 6px 8px; border-bottom: 1px solid var(--grid);
+    font-variant-numeric: tabular-nums;
+  }
+  table.data-table th:first-child, table.data-table td:first-child { text-align: left; }
+  table.data-table th { color: var(--text-muted); font-weight: 600; }
+
+  #emptyState { color: var(--text-secondary); font-size: 14px; padding: 40px 0; text-align: center; }
+  footer { color: var(--text-muted); font-size: 12px; margin-top: 32px; }
+  footer code { background: var(--grid); padding: 2px 5px; border-radius: 4px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Artillery load test report</h1>
+    <p class="sub" id="runSub">Cargando…</p>
+  </header>
+
+  <div class="controls">
+    <label class="filebtn" for="fileInput">Elegir report.json</label>
+    <input type="file" id="fileInput" accept="application/json,.json">
+    <button id="reloadBtn" type="button">Recargar desde disco</button>
+    <span id="status">Buscando ./report.json…</span>
+  </div>
+
+  <div id="emptyState" style="display:none;">
+    No hay datos cargados todavía. Corre <code>artillery run artillery.yml --output report.json</code>
+    y usa "Recargar desde disco", o selecciona el archivo con "Elegir report.json".
+  </div>
+
+  <main id="content" style="display:none;">
+    <section class="stats" id="stats"></section>
+
+    <section class="card">
+      <h2>Tiempo de respuesta (percentiles) por intervalo</h2>
+      <p class="card-sub">p50 / p95 / p99 de <code>http.response_time</code>, en ventanas de ~10 s</p>
+      <div class="chart-scroll">
+        <div class="chart-wrap" id="latencyChartWrap"></div>
+      </div>
+      <div class="legend" id="latencyLegend"></div>
+      <button class="toggle-table" data-target="latencyTable">Ver como tabla</button>
+      <div class="chart-scroll"><table class="data-table" id="latencyTable"></table></div>
+    </section>
+
+    <section class="card">
+      <h2>Usuarios virtuales completados vs. fallidos</h2>
+      <p class="card-sub">Por intervalo — un vuser "falla" cuando su request no cumple la expectativa (timeout, conexión, status code)</p>
+      <div class="chart-scroll">
+        <div class="chart-wrap" id="vusersChartWrap"></div>
+      </div>
+      <div class="legend" id="vusersLegend"></div>
+      <button class="toggle-table" data-target="vusersTable">Ver como tabla</button>
+      <div class="chart-scroll"><table class="data-table" id="vusersTable"></table></div>
+    </section>
+
+    <section class="card">
+      <h2>Resultados por tipo</h2>
+      <p class="card-sub">Total de respuestas y errores agregados durante toda la corrida</p>
+      <div class="chart-scroll">
+        <div class="chart-wrap" id="breakdownChartWrap"></div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    Generado para leer el <code>report.json</code> de Artillery (<code>--output report.json</code>). No requiere
+    servidor: si el navegador bloquea la lectura automática por abrir el archivo con <code>file://</code>,
+    usa el selector de archivo de arriba.
+  </footer>
+</div>
+
+<div class="tooltip" id="tooltip"></div>
+
+<script>
+(function () {
+  var SERIES_COLOR = ['var(--series-1)', 'var(--series-2)', 'var(--series-3)'];
+  var tooltip = document.getElementById('tooltip');
+  var statusEl = document.getElementById('status');
+  var runSub = document.getElementById('runSub');
+  var content = document.getElementById('content');
+  var emptyState = document.getElementById('emptyState');
+
+  function fmtNum(n) {
+    if (n === null || n === undefined || isNaN(n)) return '—';
+    if (Math.abs(n) >= 1000) return (n / 1000).toFixed(1).replace(/\.0$/, '') + 'K';
+    return Math.round(n * 10) / 10 + '';
+  }
+  function fmtMs(n) { return (n === null || n === undefined) ? '—' : Math.round(n) + ' ms'; }
+  function fmtPct(n) { return (n === null || n === undefined || isNaN(n)) ? '—' : n.toFixed(1) + '%'; }
+  function fmtTime(sSinceStart) {
+    var m = Math.floor(sSinceStart / 60), s = Math.round(sSinceStart % 60);
+    return m > 0 ? (m + 'm ' + s + 's') : (s + 's');
+  }
+  function get(obj, key, def) {
+    return (obj && obj[key] !== undefined) ? obj[key] : def;
+  }
+
+  function buildPeriods(data) {
+    var inter = data.intermediate || [];
+    var periods = inter.map(function (p) { return p.period; }).filter(function (p) { return p !== undefined; });
+    var t0 = periods.length ? Math.min.apply(null, periods) : (data.aggregate.firstMetricAt || 0);
+    return inter.map(function (p) {
+      var c = p.counters || {};
+      var s = (p.summaries || {})['http.response_time'];
+      return {
+        tSec: ((p.period || 0) - t0) / 1000,
+        completed: get(c, 'vusers.completed', 0),
+        failed: get(c, 'vusers.failed', 0),
+        requests: get(c, 'http.requests', 0),
+        p50: s ? s.p50 : null,
+        p95: s ? s.p95 : null,
+        p99: s ? s.p99 : null
+      };
+    });
+  }
+
+  function buildBreakdown(counters) {
+    var items = [];
+    Object.keys(counters).forEach(function (key) {
+      if (key.indexOf('plugins.') === 0) return; // avoid double counting per-endpoint dupes
+      var label = null, color = 'var(--serious)';
+      if (key.indexOf('http.codes.') === 0) {
+        var code = key.slice('http.codes.'.length);
+        label = 'HTTP ' + code;
+        color = code[0] === '2' ? 'var(--good)' : (code[0] === '5' ? 'var(--critical)' : 'var(--serious)');
+      } else if (key.indexOf('errors.') === 0) {
+        var type = key.slice('errors.'.length);
+        label = type;
+        color = (type === 'ETIMEDOUT') ? 'var(--critical)' : 'var(--serious)';
+      }
+      if (label) items.push({ label: label, value: counters[key], color: color });
+    });
+    items.sort(function (a, b) { return b.value - a.value; });
+    return items;
+  }
+
+  function renderStats(agg, periods) {
+    var counters = agg.counters || {};
+    var rates = agg.rates || {};
+    var respTime = (agg.summaries || {})['http.response_time'] || {};
+    var completed = get(counters, 'vusers.completed', 0);
+    var failed = get(counters, 'vusers.failed', 0);
+    var total = completed + failed;
+    var errorRate = total ? (failed / total * 100) : null;
+    var durationSec = ((agg.lastMetricAt || 0) - (agg.firstMetricAt || 0)) / 1000;
+
+    runSub.textContent = 'Duración ' + fmtTime(durationSec) + ' · ' +
+      get(counters, 'http.requests', 0) + ' requests enviados · ' +
+      periods.length + ' intervalos';
+
+    var tiles = [
+      { label: 'Requests enviados', value: fmtNum(get(counters, 'http.requests', 0)) },
+      { label: 'Respuestas 200', value: fmtNum(get(counters, 'http.codes.200', 0)), cls: 'good' },
+      { label: 'Vusers fallidos', value: fmtNum(failed), cls: failed > 0 ? 'critical' : '' },
+      { label: 'Tasa de error', value: fmtPct(errorRate), cls: errorRate > 10 ? 'critical' : '' },
+      { label: 'p95 latencia', value: fmtMs(respTime.p95) },
+      { label: 'Request rate', value: fmtNum(get(rates, 'http.request_rate', 0)) + '/s' }
+    ];
+    var host = document.getElementById('stats');
+    host.innerHTML = '';
+    tiles.forEach(function (t) {
+      var div = document.createElement('div');
+      div.className = 'tile';
+      div.innerHTML = '<div class="label"></div><div class="value ' + (t.cls || '') + '"></div>';
+      div.querySelector('.label').textContent = t.label;
+      div.querySelector('.value').textContent = t.value;
+      host.appendChild(div);
+    });
+  }
+
+  // ---- Line chart (latency percentiles) ----
+  function renderLineChart(container, legendHost, tableHost, periods, seriesDefs) {
+    var W = 860, H = 280, M = { top: 16, right: 16, bottom: 28, left: 44 };
+    var innerW = W - M.left - M.right, innerH = H - M.top - M.bottom;
+
+    var allVals = [];
+    periods.forEach(function (p) { seriesDefs.forEach(function (sd) { if (p[sd.key] != null) allVals.push(p[sd.key]); }); });
+    var maxY = allVals.length ? Math.max.apply(null, allVals) : 1;
+    maxY = Math.ceil(maxY / 200) * 200 || 200;
+    var maxX = periods.length ? periods[periods.length - 1].tSec : 1;
+
+    function xPos(t) { return M.left + (maxX ? (t / maxX) * innerW : 0); }
+    function yPos(v) { return M.top + innerH - (v / maxY) * innerH; }
+
+    var svgParts = [];
+    svgParts.push('<svg class="chart" viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Latencia por intervalo">');
+
+    // gridlines + y ticks
+    var ticks = 4;
+    for (var i = 0; i <= ticks; i++) {
+      var v = (maxY / ticks) * i;
+      var y = yPos(v);
+      svgParts.push('<line class="gridline" x1="' + M.left + '" x2="' + (W - M.right) + '" y1="' + y + '" y2="' + y + '"/>');
+      svgParts.push('<text class="axis-label" x="' + (M.left - 8) + '" y="' + (y + 3) + '" text-anchor="end">' + Math.round(v) + '</text>');
+    }
+    svgParts.push('<line class="baseline" x1="' + M.left + '" x2="' + (W - M.right) + '" y1="' + (M.top + innerH) + '" y2="' + (M.top + innerH) + '"/>');
+
+    // x ticks (~5)
+    var xTickCount = Math.min(6, periods.length);
+    for (var k = 0; k < xTickCount; k++) {
+      var idx = Math.round((periods.length - 1) * (k / (xTickCount - 1 || 1)));
+      var p = periods[idx];
+      if (!p) continue;
+      var x = xPos(p.tSec);
+      svgParts.push('<text class="axis-label" x="' + x + '" y="' + (H - 8) + '" text-anchor="middle">' + fmtTime(p.tSec) + '</text>');
+    }
+
+    seriesDefs.forEach(function (sd) {
+      var d = '', started = false;
+      periods.forEach(function (p) {
+        var v = p[sd.key];
+        if (v == null) { started = false; return; }
+        var cmd = started ? 'L' : 'M';
+        d += cmd + xPos(p.tSec).toFixed(1) + ' ' + yPos(v).toFixed(1) + ' ';
+        started = true;
+      });
+      svgParts.push('<path d="' + d.trim() + '" fill="none" stroke="' + sd.color + '" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" data-series="' + sd.key + '"/>');
+
+      // end marker + direct label
+      for (var j = periods.length - 1; j >= 0; j--) {
+        if (periods[j][sd.key] != null) {
+          var ex = xPos(periods[j].tSec), ey = yPos(periods[j][sd.key]);
+          svgParts.push('<circle cx="' + ex + '" cy="' + ey + '" r="4" fill="' + sd.color + '" stroke="var(--surface-1)" stroke-width="2"/>');
+          break;
+        }
+      }
+    });
+
+    // hover layer
+    svgParts.push('<rect class="hover-capture" x="' + M.left + '" y="' + M.top + '" width="' + innerW + '" height="' + innerH + '" fill="transparent"/>');
+    svgParts.push('<line id="crosshair" class="baseline" x1="0" x2="0" y1="' + M.top + '" y2="' + (M.top + innerH) + '" style="visibility:hidden;"/>');
+    svgParts.push('</svg>');
+
+    container.innerHTML = svgParts.join('');
+    var svg = container.querySelector('svg');
+    var crosshair = svg.querySelector('#crosshair');
+    var capture = svg.querySelector('.hover-capture');
+
+    capture.addEventListener('pointermove', function (evt) {
+      var rect = svg.getBoundingClientRect();
+      var scale = W / rect.width;
+      var mx = (evt.clientX - rect.left) * scale;
+      var t = ((mx - M.left) / innerW) * maxX;
+      var closest = null, closestDist = Infinity;
+      periods.forEach(function (p) {
+        var dist = Math.abs(p.tSec - t);
+        if (dist < closestDist) { closestDist = dist; closest = p; }
+      });
+      if (!closest) return;
+      var cx = xPos(closest.tSec);
+      crosshair.setAttribute('x1', cx); crosshair.setAttribute('x2', cx);
+      crosshair.style.visibility = 'visible';
+
+      var rows = seriesDefs.map(function (sd) {
+        var v = closest[sd.key];
+        return '<div class="t-row"><span class="key" style="background:' + sd.color + '"></span>' +
+          '<span class="name"></span><span class="val"></span></div>';
+      }).join('');
+      tooltip.innerHTML = '<div class="t-title"></div>' + rows;
+      tooltip.querySelector('.t-title').textContent = 't = ' + fmtTime(closest.tSec);
+      var rowEls = tooltip.querySelectorAll('.t-row');
+      seriesDefs.forEach(function (sd, i) {
+        rowEls[i].querySelector('.name').textContent = sd.name;
+        rowEls[i].querySelector('.val').textContent = fmtMs(closest[sd.key]);
+      });
+      tooltip.style.visibility = 'visible';
+      tooltip.style.left = (evt.clientX + 14) + 'px';
+      tooltip.style.top = (evt.clientY + 14 + window.scrollY) + 'px';
+    });
+    capture.addEventListener('pointerleave', function () {
+      crosshair.style.visibility = 'hidden';
+      tooltip.style.visibility = 'hidden';
+    });
+
+    legendHost.innerHTML = seriesDefs.map(function (sd) {
+      return '<span class="item"><span class="swatch-line" style="background:' + sd.color + '"></span>' + sd.name + '</span>';
+    }).join('');
+
+    var rowsHtml = '<thead><tr><th>t</th>' + seriesDefs.map(function (s) { return '<th>' + s.name + '</th>'; }).join('') + '</tr></thead><tbody>';
+    periods.forEach(function (p) {
+      rowsHtml += '<tr><td>' + fmtTime(p.tSec) + '</td>' + seriesDefs.map(function (sd) { return '<td>' + fmtMs(p[sd.key]) + '</td>'; }).join('') + '</tr>';
+    });
+    tableHost.innerHTML = rowsHtml + '</tbody>';
+  }
+
+  // ---- Stacked bar chart (vusers completed vs failed) ----
+  function renderBarChart(container, legendHost, tableHost, periods) {
+    var W = 860, H = 260, M = { top: 16, right: 16, bottom: 28, left: 44 };
+    var innerW = W - M.left - M.right, innerH = H - M.top - M.bottom;
+    var maxTotal = periods.reduce(function (m, p) { return Math.max(m, p.completed + p.failed); }, 1);
+    maxTotal = Math.ceil(maxTotal / 5) * 5 || 5;
+
+    var n = periods.length || 1;
+    var slot = innerW / n;
+    var barW = Math.min(24, slot - 2);
+
+    function yPos(v) { return M.top + innerH - (v / maxTotal) * innerH; }
+
+    var parts = [];
+    parts.push('<svg class="chart" viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Usuarios virtuales completados y fallidos por intervalo">');
+    var ticks = 4;
+    for (var i = 0; i <= ticks; i++) {
+      var v = (maxTotal / ticks) * i, y = yPos(v);
+      parts.push('<line class="gridline" x1="' + M.left + '" x2="' + (W - M.right) + '" y1="' + y + '" y2="' + y + '"/>');
+      parts.push('<text class="axis-label" x="' + (M.left - 8) + '" y="' + (y + 3) + '" text-anchor="end">' + Math.round(v) + '</text>');
+    }
+    parts.push('<line class="baseline" x1="' + M.left + '" x2="' + (W - M.right) + '" y1="' + (M.top + innerH) + '" y2="' + (M.top + innerH) + '"/>');
+
+    var xTickCount = Math.min(6, n);
+    periods.forEach(function (p, idx) {
+      var cx = M.left + slot * idx + slot / 2;
+      var x = cx - barW / 2;
+      var gap = 1; // half of the 2px surface gap on each side
+      var yFailedTop = yPos(p.failed);
+      var yCompletedTop = yPos(p.completed + p.failed);
+      if (p.failed > 0) {
+        parts.push('<rect x="' + x + '" y="' + yFailedTop + '" width="' + barW + '" height="' + (M.top + innerH - yFailedTop) + '" fill="var(--critical)" rx="4" data-idx="' + idx + '" data-kind="failed"/>');
+      }
+      if (p.completed > 0) {
+        parts.push('<rect x="' + x + '" y="' + yCompletedTop + '" width="' + barW + '" height="' + (yFailedTop - yCompletedTop - (p.failed > 0 ? gap * 2 : 0)) + '" fill="var(--good)" rx="4" data-idx="' + idx + '" data-kind="completed"/>');
+      }
+      parts.push('<rect class="hit" x="' + (cx - slot / 2) + '" y="' + M.top + '" width="' + slot + '" height="' + innerH + '" fill="transparent" data-idx="' + idx + '"/>');
+
+      if (xTickCount > 1 && idx % Math.max(1, Math.round(n / xTickCount)) === 0) {
+        parts.push('<text class="axis-label" x="' + cx + '" y="' + (H - 8) + '" text-anchor="middle">' + fmtTime(p.tSec) + '</text>');
+      }
+    });
+    parts.push('</svg>');
+    container.innerHTML = parts.join('');
+
+    var svg = container.querySelector('svg');
+    svg.querySelectorAll('.hit').forEach(function (hit) {
+      hit.addEventListener('pointermove', function (evt) {
+        var idx = +hit.getAttribute('data-idx');
+        var p = periods[idx];
+        tooltip.innerHTML =
+          '<div class="t-title"></div>' +
+          '<div class="t-row"><span class="key" style="background:var(--good)"></span><span class="name">Completados</span><span class="val"></span></div>' +
+          '<div class="t-row"><span class="key" style="background:var(--critical)"></span><span class="name">Fallidos</span><span class="val"></span></div>';
+        tooltip.querySelector('.t-title').textContent = 't = ' + fmtTime(p.tSec);
+        var vals = tooltip.querySelectorAll('.val');
+        vals[0].textContent = p.completed;
+        vals[1].textContent = p.failed;
+        tooltip.style.visibility = 'visible';
+        tooltip.style.left = (evt.clientX + 14) + 'px';
+        tooltip.style.top = (evt.clientY + 14 + window.scrollY) + 'px';
+      });
+      hit.addEventListener('pointerleave', function () { tooltip.style.visibility = 'hidden'; });
+    });
+
+    legendHost.innerHTML =
+      '<span class="item"><span class="swatch-dot" style="background:var(--good)"></span>Completados</span>' +
+      '<span class="item"><span class="swatch-dot" style="background:var(--critical)"></span>Fallidos</span>';
+
+    var rowsHtml = '<thead><tr><th>t</th><th>Completados</th><th>Fallidos</th></tr></thead><tbody>';
+    periods.forEach(function (p) {
+      rowsHtml += '<tr><td>' + fmtTime(p.tSec) + '</td><td>' + p.completed + '</td><td>' + p.failed + '</td></tr>';
+    });
+    tableHost.innerHTML = rowsHtml + '</tbody>';
+  }
+
+  // ---- Horizontal breakdown bar chart ----
+  function renderBreakdownChart(container, items) {
+    var W = 860, rowH = 34, M = { top: 8, right: 60, bottom: 8, left: 110 };
+    var H = M.top + M.bottom + rowH * items.length;
+    var innerW = W - M.left - M.right;
+    var maxV = items.reduce(function (m, it) { return Math.max(m, it.value); }, 1);
+
+    var parts = [];
+    parts.push('<svg class="chart" viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Resultados por tipo">');
+    items.forEach(function (it, idx) {
+      var y = M.top + idx * rowH;
+      var barH = 20;
+      var w = (it.value / maxV) * innerW;
+      parts.push('<text class="axis-label" x="' + (M.left - 10) + '" y="' + (y + barH / 2 + 4) + '" text-anchor="end"></text>');
+      parts.push('<rect x="' + M.left + '" y="' + y + '" width="' + Math.max(w, 2) + '" height="' + barH + '" rx="4" fill="' + it.color + '" data-idx="' + idx + '"/>');
+      parts.push('<text class="axis-label" x="' + (M.left + w + 8) + '" y="' + (y + barH / 2 + 4) + '" text-anchor="start" style="fill:var(--text-primary);font-weight:600;"></text>');
+    });
+    parts.push('</svg>');
+    container.innerHTML = parts.join('');
+
+    var texts = container.querySelectorAll('text.axis-label');
+    items.forEach(function (it, idx) {
+      texts[idx * 2].textContent = it.label;
+      texts[idx * 2 + 1].textContent = fmtNum(it.value);
+    });
+  }
+
+  function setupTableToggles() {
+    document.querySelectorAll('.toggle-table').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var target = document.getElementById(btn.getAttribute('data-target'));
+        target.classList.toggle('show');
+        btn.textContent = target.classList.contains('show') ? 'Ocultar tabla' : 'Ver como tabla';
+      });
+    });
+  }
+  setupTableToggles();
+
+  function render(data) {
+    if (!data || !data.aggregate) {
+      statusEl.textContent = 'El archivo no parece un reporte de Artillery válido (falta "aggregate").';
+      emptyState.style.display = 'block';
+      content.style.display = 'none';
+      return;
+    }
+    emptyState.style.display = 'none';
+    content.style.display = 'block';
+
+    var periods = buildPeriods(data);
+    renderStats(data.aggregate, periods);
+
+    renderLineChart(
+      document.getElementById('latencyChartWrap'),
+      document.getElementById('latencyLegend'),
+      document.getElementById('latencyTable'),
+      periods,
+      [
+        { key: 'p50', name: 'p50', color: SERIES_COLOR[0] },
+        { key: 'p95', name: 'p95', color: SERIES_COLOR[1] },
+        { key: 'p99', name: 'p99', color: SERIES_COLOR[2] }
+      ]
+    );
+
+    renderBarChart(
+      document.getElementById('vusersChartWrap'),
+      document.getElementById('vusersLegend'),
+      document.getElementById('vusersTable'),
+      periods
+    );
+
+    renderBreakdownChart(
+      document.getElementById('breakdownChartWrap'),
+      buildBreakdown(data.aggregate.counters || {})
+    );
+  }
+
+  function tryFetch() {
+    statusEl.textContent = 'Buscando ./report.json…';
+    fetch('./report.json', { cache: 'no-store' })
+      .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(function (data) {
+        statusEl.textContent = 'Cargado automáticamente desde report.json';
+        render(data);
+      })
+      .catch(function () {
+        statusEl.textContent = 'No se pudo leer el archivo automáticamente (¿lo abriste con file://?). Selecciona report.json arriba.';
+      });
+  }
+
+  document.getElementById('reloadBtn').addEventListener('click', tryFetch);
+  document.getElementById('fileInput').addEventListener('change', function (evt) {
+    var file = evt.target.files[0];
+    if (!file) return;
+    var reader = new FileReader();
+    reader.onload = function () {
+      try {
+        var data = JSON.parse(reader.result);
+        statusEl.textContent = 'Cargado desde archivo: ' + file.name;
+        render(data);
+      } catch (e) {
+        statusEl.textContent = 'No se pudo interpretar el archivo como JSON.';
+      }
+    };
+    reader.readAsText(file);
+  });
+
+  tryFetch();
+})();
+</script>
+</body>
+</html>
