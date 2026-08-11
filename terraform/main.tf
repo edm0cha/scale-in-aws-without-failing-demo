@@ -1,5 +1,11 @@
 # ─── Security Group ───────────────────────────────────────────────────────────
 
+# ALB and target group names are capped at 32 chars by AWS; app_name alone is
+# already 33, so give resources that hit that limit a shortened prefix.
+locals {
+  short_name = substr(var.app_name, 0, 28)
+}
+
 data "aws_vpc" "default" {
   default = true
 }
@@ -103,7 +109,7 @@ resource "aws_instance" "app" {
 # ─── Application Load Balancer ────────────────────────────────────────────────
 
 resource "aws_lb" "app" {
-  name               = "${var.app_name}-alb"
+  name               = "${local.short_name}-alb"
   internal           = false
   load_balancer_type = "application"
   security_groups    = [aws_security_group.alb.id]
@@ -115,7 +121,7 @@ resource "aws_lb" "app" {
 }
 
 resource "aws_lb_target_group" "app" {
-  name     = "${var.app_name}-tg"
+  name     = "${local.short_name}-tg"
   port     = 3000
   protocol = "HTTP"
   vpc_id   = data.aws_vpc.default.id
