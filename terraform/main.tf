@@ -1,52 +1,8 @@
-terraform {
-  required_version = ">= 1.6"
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.0"
-    }
-  }
-}
-
-provider "aws" {
-  region = var.aws_region
-}
-
-# ─── AMI ──────────────────────────────────────────────────────────────────────
-
-data "aws_ami" "amazon_linux_2023" {
-  most_recent = true
-  owners      = ["amazon"]
-
-  filter {
-    name   = "name"
-    values = ["al2023-ami-*-x86_64"]
-  }
-
-  filter {
-    name   = "virtualization-type"
-    values = ["hvm"]
-  }
-}
-
-# ─── Networking (default VPC) ─────────────────────────────────────────────────
-
-data "aws_vpc" "default" {
-  default = true
-}
-
-data "aws_subnets" "default" {
-  filter {
-    name   = "vpc-id"
-    values = [data.aws_vpc.default.id]
-  }
-}
-
 # ─── Security Groups ──────────────────────────────────────────────────────────
 
 # ALB — accepts HTTP on port 80 from the internet
 resource "aws_security_group" "alb" {
-  name        = "${var.app_name}-alb-sg"
+  name        = "${local.short_name}-alb-sg"
   description = "Allow HTTP inbound to ALB"
   vpc_id      = data.aws_vpc.default.id
 
@@ -66,13 +22,13 @@ resource "aws_security_group" "alb" {
   }
 
   tags = {
-    Name = "${var.app_name}-alb-sg"
+    Name = "${local.short_name}-alb-sg"
   }
 }
 
 # EC2 — accepts app traffic from the ALB and SSH from anywhere
 resource "aws_security_group" "app" {
-  name        = "${var.app_name}-sg"
+  name        = "${local.short_name}-sg"
   description = "Allow HTTP app traffic and SSH"
   vpc_id      = data.aws_vpc.default.id
 
@@ -102,7 +58,7 @@ resource "aws_security_group" "app" {
   }
 
   tags = {
-    Name = "${var.app_name}-sg"
+    Name = "${local.short_name}-sg"
   }
 }
 
@@ -127,26 +83,26 @@ resource "aws_instance" "app" {
   }
 
   tags = {
-    Name = var.app_name
+    Name = local.short_name
   }
 }
 
 # ─── Application Load Balancer ────────────────────────────────────────────────
 
 resource "aws_lb" "app" {
-  name               = "${var.app_name}-alb"
+  name               = "${local.short_name}-alb"
   internal           = false
   load_balancer_type = "application"
   security_groups    = [aws_security_group.alb.id]
   subnets            = data.aws_subnets.default.ids
 
   tags = {
-    Name = "${var.app_name}-alb"
+    Name = "${local.short_name}-alb"
   }
 }
 
 resource "aws_lb_target_group" "app" {
-  name     = "${var.app_name}-tg"
+  name     = "${local.short_name}-tg"
   port     = 3000
   protocol = "HTTP"
   vpc_id   = data.aws_vpc.default.id
@@ -159,7 +115,7 @@ resource "aws_lb_target_group" "app" {
   }
 
   tags = {
-    Name = "${var.app_name}-tg"
+    Name = "${local.short_name}-tg"
   }
 }
 
@@ -179,7 +135,7 @@ resource "aws_instance" "app2" {
   }
 
   tags = {
-    Name = "${var.app_name}-2"
+    Name = "${local.short_name}-2"
   }
 }
 

@@ -13,5 +13,5 @@ variable "instance_type" {
 variable "app_name" {
   description = "Name tag applied to all resources"
   type        = string
-  default     = "scale-demo"
+  default     = "scale-in-aws-without-failing-demo"
 }
