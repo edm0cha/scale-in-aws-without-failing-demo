@@ -27,15 +27,35 @@
         "ec2:DescribeInstanceAttribute",
         "ec2:DescribeInstanceCreditSpecifications",
         "ec2:DescribeInstanceTypes",
-        "ec2:DescribeVolumes"
+        "ec2:DescribeVolumes",
+        "ec2:DescribeVpcs",
+        "ec2:DescribeSubnets",
+        "ec2:DescribeInternetGateways",
+        "ec2:DescribeAccountAttributes"
       ],
       "Resource": "*"
+    },
+    {
+      "Sid": "EC2VpcRead",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeVpcAttribute"
+      ],
+      "Resource": "arn:aws:ec2:us-east-1:${account_id}:vpc/*"
+    },
+    {
+      "Sid": "EC2CreateSecurityGroup",
+      "Effect": "Allow",
+      "Action": "ec2:CreateSecurityGroup",
+      "Resource": [
+        "arn:aws:ec2:us-east-1:${account_id}:security-group/*",
+        "arn:aws:ec2:us-east-1:${account_id}:vpc/*"
+      ]
     },
     {
       "Sid": "EC2SecurityGroupWrite",
       "Effect": "Allow",
       "Action": [
-        "ec2:CreateSecurityGroup",
         "ec2:DeleteSecurityGroup",
         "ec2:AuthorizeSecurityGroupEgress",
         "ec2:AuthorizeSecurityGroupIngress",
@@ -90,6 +110,78 @@
         "arn:aws:ec2:us-east-1:${account_id}:security-group/*",
         "arn:aws:ec2:us-east-1:${account_id}:network-interface/*",
         "arn:aws:ec2:us-east-1:${account_id}:volume/*"
+      ]
+    },
+    {
+      "Sid": "ELBServiceLinkedRole",
+      "Effect": "Allow",
+      "Action": "iam:CreateServiceLinkedRole",
+      "Resource": "arn:aws:iam::${account_id}:role/aws-service-role/elasticloadbalancing.amazonaws.com/AWSServiceRoleForElasticLoadBalancing",
+      "Condition": {
+        "StringLike": {
+          "iam:AWSServiceName": "elasticloadbalancing.amazonaws.com"
+        }
+      }
+    },
+    {
+      "Sid": "ELBReadOnly",
+      "Effect": "Allow",
+      "Action": [
+        "elasticloadbalancing:DescribeLoadBalancers",
+        "elasticloadbalancing:DescribeLoadBalancerAttributes",
+        "elasticloadbalancing:DescribeTargetGroups",
+        "elasticloadbalancing:DescribeTargetGroupAttributes",
+        "elasticloadbalancing:DescribeTargetHealth",
+        "elasticloadbalancing:DescribeListeners",
+        "elasticloadbalancing:DescribeListenerAttributes",
+        "elasticloadbalancing:DescribeTags"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ELBLoadBalancerWrite",
+      "Effect": "Allow",
+      "Action": [
+        "elasticloadbalancing:CreateLoadBalancer",
+        "elasticloadbalancing:DeleteLoadBalancer",
+        "elasticloadbalancing:ModifyLoadBalancerAttributes",
+        "elasticloadbalancing:CreateListener"
+      ],
+      "Resource": "arn:aws:elasticloadbalancing:us-east-1:${account_id}:loadbalancer/app/*"
+    },
+    {
+      "Sid": "ELBTargetGroupWrite",
+      "Effect": "Allow",
+      "Action": [
+        "elasticloadbalancing:CreateTargetGroup",
+        "elasticloadbalancing:DeleteTargetGroup",
+        "elasticloadbalancing:ModifyTargetGroup",
+        "elasticloadbalancing:ModifyTargetGroupAttributes",
+        "elasticloadbalancing:RegisterTargets",
+        "elasticloadbalancing:DeregisterTargets"
+      ],
+      "Resource": "arn:aws:elasticloadbalancing:us-east-1:${account_id}:targetgroup/*"
+    },
+    {
+      "Sid": "ELBListenerWrite",
+      "Effect": "Allow",
+      "Action": [
+        "elasticloadbalancing:DeleteListener",
+        "elasticloadbalancing:ModifyListener"
+      ],
+      "Resource": "arn:aws:elasticloadbalancing:us-east-1:${account_id}:listener/app/*"
+    },
+    {
+      "Sid": "ELBTags",
+      "Effect": "Allow",
+      "Action": [
+        "elasticloadbalancing:AddTags",
+        "elasticloadbalancing:RemoveTags"
+      ],
+      "Resource": [
+        "arn:aws:elasticloadbalancing:us-east-1:${account_id}:loadbalancer/app/*",
+        "arn:aws:elasticloadbalancing:us-east-1:${account_id}:targetgroup/*",
+        "arn:aws:elasticloadbalancing:us-east-1:${account_id}:listener/app/*"
       ]
     }
   ]
