@@ -1,16 +1,6 @@
-output "instance_id" {
-  description = "EC2 instance 1 ID"
-  value       = aws_instance.app.id
-}
-
-output "instance_id_2" {
-  description = "EC2 instance 2 ID"
-  value       = aws_instance.app2.id
-}
-
-output "public_ip" {
-  description = "Public IP of the EC2 instance"
-  value       = aws_instance.app.public_ip
+output "asg_name" {
+  description = "Name of the Auto Scaling Group"
+  value       = aws_autoscaling_group.app.name
 }
 
 output "alb_dns_name" {
