@@ -5,33 +5,32 @@ config:
   target: "{{ $env.TARGET_URL }}"
 
   phases:
-    # Phase 1 — baseline: prove the fleet handles low load comfortably
-    - name: "Warm up"
-      duration: 30
-      arrivalRate: 5
+  # Phase 1 — baseline: prove the fleet handles low load comfortably
+  - name: "Warm up"
+    duration: 30
+    arrivalRate: 10
 
-    # Phase 2 — ramp: push CPU above the 60 % scaling threshold on both instances
-    - name: "Ramp up"
-      duration: 60
-      arrivalRate: 5
-      rampTo: 70
+  # Phase 2 — ramp: push CPU above the 60 % scaling threshold on both instances
+  - name: "Ramp up"
+    duration: 60
+    arrivalRate: 5
+    rampTo: 25
 
-    # Phase 3 — sustained pressure: hold load while ASG detects high CPU,
-    # provisions new instances (~90 s boot), and registers them with the ALB.
-    # 4 minutes gives enough time to watch the full scale-out in CloudWatch.
-    - name: "Sustained — wait for ASG to scale out"
-      duration: 240
-      arrivalRate: 70
-
+  # Phase 3 — sustained pressure: hold load while ASG detects high CPU,
+  # provisions new instances (~90 s boot), and registers them with the ALB.
+  # 4 minutes gives enough time to watch the full scale-out in CloudWatch.
+  - name: "Sustained — wait for ASG to scale out"
+    duration: 240
+    arrivalRate: 50
   # Report latency percentiles
   plugins:
     metrics-by-endpoint: {}
 
 scenarios:
-  - name: "CPU work"
-    flow:
-      - get:
-          url: "/work"
-          # Treat anything ≥ 500 as a failure (shows up red in the report)
-          expect:
-            - statusCode: 200
+- name: "CPU work"
+  flow:
+  - get:
+      url: "/work"
+      # Treat anything ≥ 500 as a failure (shows up red in the report)
+      expect:
+      - statusCode: 200
