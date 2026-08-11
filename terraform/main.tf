@@ -1,35 +1,8 @@
-terraform {
-  required_version = ">= 1.6"
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.0"
-    }
-  }
-}
-
-provider "aws" {
-  region = var.aws_region
-}
-
-# ─── Networking (default VPC) ─────────────────────────────────────────────────
-
-data "aws_vpc" "default" {
-  default = true
-}
-
-data "aws_subnets" "default" {
-  filter {
-    name   = "vpc-id"
-    values = [data.aws_vpc.default.id]
-  }
-}
-
 # ─── Security Groups ──────────────────────────────────────────────────────────
 
 # ALB — accepts HTTP on port 80 from the internet
 resource "aws_security_group" "alb" {
-  name        = "${var.app_name}-alb-sg"
+  name        = "${local.short_name}-alb-sg"
   description = "Allow HTTP inbound to ALB"
   vpc_id      = data.aws_vpc.default.id
 
@@ -49,13 +22,13 @@ resource "aws_security_group" "alb" {
   }
 
   tags = {
-    Name = "${var.app_name}-alb-sg"
+    Name = "${local.short_name}-alb-sg"
   }
 }
 
 # EC2 — accepts app traffic from the ALB and SSH from anywhere
 resource "aws_security_group" "app" {
-  name        = "${var.app_name}-sg"
+  name        = "${local.short_name}-sg"
   description = "Allow HTTP app traffic and SSH"
   vpc_id      = data.aws_vpc.default.id
 
@@ -85,7 +58,7 @@ resource "aws_security_group" "app" {
   }
 
   tags = {
-    Name = "${var.app_name}-sg"
+    Name = "${local.short_name}-sg"
   }
 }
 
@@ -108,39 +81,8 @@ resource "aws_launch_template" "app" {
     cpu_credits = "unlimited"
   }
 
-  user_data = base64encode(file("${path.module}/user-data.sh"))
-
-  tag_specifications {
-    resource_type = "instance"
-    tags = {
-      Name = var.app_name
-    }
-  }
-}
-
-# ─── Auto Scaling Group ───────────────────────────────────────────────────────
-
-resource "aws_autoscaling_group" "app" {
-  name                      = "${var.app_name}-asg"
-  min_size                  = 1
-  max_size                  = 4
-  desired_capacity          = 2
-  vpc_zone_identifier       = data.aws_subnets.default.ids
-  health_check_type         = "ELB"
-  health_check_grace_period = 120
-
-  launch_template {
-    id      = aws_launch_template.app.id
-    version = "$Latest"
-  }
-
-  # Register instances with the ALB target group automatically
-  target_group_arns = [aws_lb_target_group.app.arn]
-
-  tag {
-    key                 = "Name"
-    value               = var.app_name
-    propagate_at_launch = true
+  tags = {
+    Name = local.short_name
   }
 }
 
@@ -187,19 +129,19 @@ resource "aws_autoscaling_schedule" "scale_up_morning" {
 # ─── Application Load Balancer ────────────────────────────────────────────────
 
 resource "aws_lb" "app" {
-  name               = "${var.app_name}-alb"
+  name               = "${local.short_name}-alb"
   internal           = false
   load_balancer_type = "application"
   security_groups    = [aws_security_group.alb.id]
   subnets            = data.aws_subnets.default.ids
 
   tags = {
-    Name = "${var.app_name}-alb"
+    Name = "${local.short_name}-alb"
   }
 }
 
 resource "aws_lb_target_group" "app" {
-  name     = "${var.app_name}-tg"
+  name     = "${local.short_name}-tg"
   port     = 3000
   protocol = "HTTP"
   vpc_id   = data.aws_vpc.default.id
@@ -212,8 +154,40 @@ resource "aws_lb_target_group" "app" {
   }
 
   tags = {
-    Name = "${var.app_name}-tg"
+    Name = "${local.short_name}-tg"
   }
+}
+
+resource "aws_instance" "app2" {
+  ami                         = data.aws_ami.amazon_linux_2023.id
+  instance_type               = var.instance_type
+  vpc_security_group_ids      = [aws_security_group.app.id]
+  associate_public_ip_address = true
+
+  monitoring = true
+
+  user_data                   = file("${path.module}/user-data.sh")
+  user_data_replace_on_change = true
+
+  credit_specification {
+    cpu_credits = "unlimited"
+  }
+
+  tags = {
+    Name = "${local.short_name}-2"
+  }
+}
+
+resource "aws_lb_target_group_attachment" "app" {
+  target_group_arn = aws_lb_target_group.app.arn
+  target_id        = aws_instance.app.id
+  port             = 3000
+}
+
+resource "aws_lb_target_group_attachment" "app2" {
+  target_group_arn = aws_lb_target_group.app.arn
+  target_id        = aws_instance.app2.id
+  port             = 3000
 }
 
 resource "aws_lb_listener" "http" {

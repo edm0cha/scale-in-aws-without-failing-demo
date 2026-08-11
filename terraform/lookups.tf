@@ -1,3 +1,4 @@
+# ─── AMI ──────────────────────────────────────────────────────────────────────
 data "aws_ami" "amazon_linux_2023" {
   most_recent = true
   owners      = ["amazon"]
@@ -12,8 +13,6 @@ data "aws_ami" "amazon_linux_2023" {
     values = ["hvm"]
   }
 }
-
-# ─── Networking (default VPC) ─────────────────────────────────────────────────
 
 data "aws_vpc" "default" {
   default = true

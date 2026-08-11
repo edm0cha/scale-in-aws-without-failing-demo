@@ -1,6 +1,5 @@
 terraform {
   required_version = ">= 1.5"
-
   required_providers {
     aws = {
       source  = "hashicorp/aws"
@@ -9,9 +8,10 @@ terraform {
   }
 
   backend "s3" {
-    key     = "shared/terraform.tfstate"
+    key     = "prod/terraform.tfstate"
     encrypt = true
   }
+
 }
 
 provider "aws" {
@@ -19,7 +19,7 @@ provider "aws" {
   default_tags {
     tags = {
       ManagedBy    = "terraform"
-      Environment  = "shared"
+      Environment  = "demos"
       Organization = "edm0cha"
       Repository   = "scale-in-aws-without-failing-demo"
       Customer     = "edm0cha"
