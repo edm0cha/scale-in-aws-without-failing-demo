@@ -27,7 +27,8 @@
         "ec2:DescribeSecurityGroups",
         "ec2:DescribeNetworkInterfaces",
         "ec2:CreateNetworkInterfaces",
-        "ec2:DeleteNetworkInterfaces"
+        "ec2:DeleteNetworkInterfaces",
+        "ec2:RevokeSecurityGroupEgress"
       ],
       "Resource": [
         "*",
