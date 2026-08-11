@@ -86,8 +86,8 @@ APPJS
 echo "==> Installing dependencies"
 npm install
 
-echo "==> Starting app with PM2"
-pm2 start server.js --name demo-app
+echo "==> Starting app with PM2 (cluster mode — one worker per vCPU)"
+pm2 start server.js --name demo-app -i max
 pm2 startup systemd -u root --hp /root
 pm2 save
 

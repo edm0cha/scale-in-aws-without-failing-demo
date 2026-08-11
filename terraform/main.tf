@@ -131,7 +131,7 @@ resource "aws_launch_template" "app" {
 resource "aws_autoscaling_group" "app" {
   name                      = "${local.short_name}-asg"
   min_size                  = 1
-  max_size                  = 4
+  max_size                  = 10
   desired_capacity          = 2
   vpc_zone_identifier       = data.aws_subnets.default.ids
   health_check_type         = "ELB"
@@ -163,7 +163,7 @@ resource "aws_autoscaling_policy" "cpu" {
     predefined_metric_specification {
       predefined_metric_type = "ASGAverageCPUUtilization"
     }
-    target_value = 60.0
+    target_value = 50.0
   }
 }
 
