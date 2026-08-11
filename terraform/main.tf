@@ -163,7 +163,7 @@ resource "aws_autoscaling_policy" "cpu" {
     predefined_metric_specification {
       predefined_metric_type = "ASGAverageCPUUtilization"
     }
-    target_value = 50.0
+    target_value = 30.0
   }
 }
 
@@ -189,7 +189,7 @@ resource "aws_autoscaling_policy" "memory" {
         value = aws_autoscaling_group.app.name
       }
     }
-    target_value = 75.0
+    target_value = 40.0
   }
 }
 
