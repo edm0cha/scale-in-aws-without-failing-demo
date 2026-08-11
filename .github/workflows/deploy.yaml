@@ -99,7 +99,11 @@ jobs:
 
       - name: Terraform Init
         working-directory: ${{ matrix.dir }}
-        run: terraform init
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="region=${{ env.AWS_REGION }}" \
+            -input=false
 
       - name: Terraform Apply
         working-directory: ${{ matrix.dir }}
