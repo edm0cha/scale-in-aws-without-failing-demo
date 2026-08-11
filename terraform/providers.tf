@@ -8,9 +8,7 @@ terraform {
   }
 
   backend "s3" {
-    bucket  = "shared-superlab-scale-in-aws-without-failing-demo-tfstate"
     key     = "prod/terraform.tfstate"
-    region  = "us-east-1"
     encrypt = true
   }
 
