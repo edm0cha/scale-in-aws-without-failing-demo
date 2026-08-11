@@ -16,7 +16,7 @@
       ]
     },
     {
-      "Sid": "TerraformStateBuckets",
+      "Sid": "EC2",
       "Effect": "Allow",
       "Action": [
         "ec2:DescribeImages"
