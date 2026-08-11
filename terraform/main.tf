@@ -1,22 +1,3 @@
-# ─── Security Group ───────────────────────────────────────────────────────────
-
-# ALB and target group names are capped at 32 chars by AWS; app_name alone is
-# already 33, so give resources that hit that limit a shortened prefix.
-locals {
-  short_name = substr(var.app_name, 0, 28)
-}
-
-data "aws_vpc" "default" {
-  default = true
-}
-
-data "aws_subnets" "default" {
-  filter {
-    name   = "vpc-id"
-    values = [data.aws_vpc.default.id]
-  }
-}
-
 # ─── Security Groups ──────────────────────────────────────────────────────────
 
 # ALB — accepts HTTP on port 80 from the internet
