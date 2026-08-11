@@ -11,8 +11,8 @@
         "s3:DeleteObject"
       ],
       "Resource": [
-        "arn:aws:s3:::shared-${project_name}-tfstate",
-        "arn:aws:s3:::shared-${project_name}-tfstate/*"
+        "arn:aws:s3:::shared-superlab-${project_name}-tfstate",
+        "arn:aws:s3:::shared-superlab-${project_name}-tfstate/*"
       ]
     }
   ]
