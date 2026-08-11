@@ -19,9 +19,10 @@
     --warning:        #fab219;
     --serious:        #ec835a;
     --critical:       #d03b3b;
-    --series-1:       #2a78d6; /* p50 */
-    --series-2:       #eb6834; /* p95 */
-    --series-3:       #1baf7a; /* p99 */
+    --series-1:       #2a78d6; /* p50 / reporte base */
+    --series-2:       #eb6834; /* p95 / comparación 1 */
+    --series-3:       #1baf7a; /* p99 / comparación 2 */
+    --series-4:       #8a5cf6; /* comparación 3 */
   }
   @media (prefers-color-scheme: dark) {
     :root {
@@ -41,6 +42,7 @@
       --series-1:       #3987e5;
       --series-2:       #d95926;
       --series-3:       #199e70;
+      --series-4:       #a78bfa;
     }
   }
 
@@ -58,17 +60,30 @@
 
   .controls {
     display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-    padding: 12px 14px; margin-bottom: 24px;
+    padding: 12px 14px; margin-bottom: 12px;
     background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px;
   }
+  .controls:last-of-type { margin-bottom: 24px; }
   .controls button, .controls label.filebtn {
     font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
     background: transparent; color: var(--text-primary);
     border: 1px solid var(--border); border-radius: 6px; padding: 6px 12px;
   }
   .controls button:hover, .controls label.filebtn:hover { background: var(--grid); }
-  #fileInput { display: none; }
-  #status { font-size: 13px; color: var(--text-secondary); }
+  .controls input[type="file"] { display: none; }
+  #status, #compareHint { font-size: 13px; color: var(--text-secondary); }
+
+  .chips { display: flex; gap: 8px; flex-wrap: wrap; }
+  .chip {
+    display: flex; align-items: center; gap: 6px; font-size: 12px;
+    background: var(--grid); border-radius: 999px; padding: 4px 6px 4px 10px;
+  }
+  .chip .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex: none; }
+  .chip button {
+    background: none; border: none; cursor: pointer; color: var(--text-muted);
+    font-size: 13px; line-height: 1; padding: 2px 4px; border-radius: 50%;
+  }
+  .chip button:hover { color: var(--critical); }
 
   section { margin-bottom: 28px; }
   .card {
@@ -77,8 +92,16 @@
   }
   .card h2 { font-size: 15px; margin: 0 0 2px; }
   .card .card-sub { font-size: 12px; color: var(--text-muted); margin: 0 0 14px; }
+  .card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+
+  select#metricSelect {
+    font: inherit; font-size: 12px; font-weight: 600; cursor: pointer;
+    background: var(--surface-1); color: var(--text-primary);
+    border: 1px solid var(--border); border-radius: 6px; padding: 5px 10px;
+  }
 
   .stats { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; }
+  .stats.mode-compare { display: block; }
   @media (max-width: 900px) { .stats { grid-template-columns: repeat(3, 1fr); } }
   @media (max-width: 560px) { .stats { grid-template-columns: repeat(2, 1fr); } }
   .tile {
@@ -89,6 +112,22 @@
   .tile .value { font-size: 24px; font-weight: 600; }
   .tile .value.good { color: var(--good); }
   .tile .value.critical { color: var(--critical); }
+
+  table.compare-table {
+    width: 100%; border-collapse: collapse; font-size: 13px;
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px;
+  }
+  table.compare-table th, table.compare-table td {
+    text-align: right; padding: 10px 14px; border-bottom: 1px solid var(--grid);
+    font-variant-numeric: tabular-nums;
+  }
+  table.compare-table thead th { color: var(--text-secondary); font-weight: 600; white-space: nowrap; }
+  table.compare-table tbody tr:last-child td { border-bottom: none; }
+  table.compare-table th:first-child, table.compare-table td:first-child {
+    text-align: left; color: var(--text-secondary);
+  }
+  table.compare-table th .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }
+  table.compare-table td.critical { color: var(--critical); font-weight: 600; }
 
   .chart-scroll { overflow-x: auto; }
   svg.chart { width: 100%; min-width: 560px; height: auto; display: block; }
@@ -143,6 +182,13 @@
     <span id="status">Buscando ./report.json…</span>
   </div>
 
+  <div class="controls" id="compareControls">
+    <label class="filebtn" id="compareLabel" for="compareInput">+ Agregar reporte para comparar</label>
+    <input type="file" id="compareInput" accept="application/json,.json">
+    <div class="chips" id="compareChips"></div>
+    <span id="compareHint">Hasta 3 reportes de comparación</span>
+  </div>
+
   <div id="emptyState" style="display:none;">
     No hay datos cargados todavía. Corre <code>artillery run artillery.yml --output report.json</code>
     y usa "Recargar desde disco", o selecciona el archivo con "Elegir report.json".
@@ -152,24 +198,33 @@
     <section class="stats" id="stats"></section>
 
     <section class="card">
-      <h2>Tiempo de respuesta (percentiles) por intervalo</h2>
-      <p class="card-sub">p50 / p95 / p99 de <code>http.response_time</code>, en ventanas de ~10 s</p>
+      <div class="card-head">
+        <div>
+          <h2 id="latencyTitle">Tiempo de respuesta (percentiles) por intervalo</h2>
+          <p class="card-sub" id="latencySub">p50 / p95 / p99 de <code>http.response_time</code>, en ventanas de ~10 s</p>
+        </div>
+        <select id="metricSelect" style="display:none;">
+          <option value="p50">Comparar p50</option>
+          <option value="p95" selected>Comparar p95</option>
+          <option value="p99">Comparar p99</option>
+        </select>
+      </div>
       <div class="chart-scroll">
         <div class="chart-wrap" id="latencyChartWrap"></div>
       </div>
       <div class="legend" id="latencyLegend"></div>
-      <button class="toggle-table" data-target="latencyTable">Ver como tabla</button>
+      <button class="toggle-table" id="latencyToggleBtn" data-target="latencyTable">Ver como tabla</button>
       <div class="chart-scroll"><table class="data-table" id="latencyTable"></table></div>
     </section>
 
     <section class="card">
-      <h2>Usuarios virtuales completados vs. fallidos</h2>
-      <p class="card-sub">Por intervalo — un vuser "falla" cuando su request no cumple la expectativa (timeout, conexión, status code)</p>
+      <h2 id="vusersTitle">Usuarios virtuales completados vs. fallidos</h2>
+      <p class="card-sub" id="vusersSub">Por intervalo — un vuser "falla" cuando su request no cumple la expectativa (timeout, conexión, status code)</p>
       <div class="chart-scroll">
         <div class="chart-wrap" id="vusersChartWrap"></div>
       </div>
       <div class="legend" id="vusersLegend"></div>
-      <button class="toggle-table" data-target="vusersTable">Ver como tabla</button>
+      <button class="toggle-table" id="vusersToggleBtn" data-target="vusersTable">Ver como tabla</button>
       <div class="chart-scroll"><table class="data-table" id="vusersTable"></table></div>
     </section>
 
@@ -179,13 +234,15 @@
       <div class="chart-scroll">
         <div class="chart-wrap" id="breakdownChartWrap"></div>
       </div>
+      <div class="legend" id="breakdownLegend"></div>
     </section>
   </main>
 
   <footer>
     Generado para leer el <code>report.json</code> de Artillery (<code>--output report.json</code>). No requiere
     servidor: si el navegador bloquea la lectura automática por abrir el archivo con <code>file://</code>,
-    usa el selector de archivo de arriba.
+    usa el selector de archivo de arriba. Puedes agregar hasta 3 reportes adicionales para compararlos contra
+    el que está cargado.
   </footer>
 </div>
 
@@ -193,12 +250,16 @@
 
 <script>
 (function () {
-  var SERIES_COLOR = ['var(--series-1)', 'var(--series-2)', 'var(--series-3)'];
+  var MAX_COMPARE = 3;
+  var REPORT_COLORS = ['var(--series-1)', 'var(--series-2)', 'var(--series-3)', 'var(--series-4)'];
   var tooltip = document.getElementById('tooltip');
   var statusEl = document.getElementById('status');
   var runSub = document.getElementById('runSub');
   var content = document.getElementById('content');
   var emptyState = document.getElementById('emptyState');
+
+  var baseReport = null;
+  var compareReports = [];
 
   function fmtNum(n) {
     if (n === null || n === undefined || isNaN(n)) return '—';
@@ -222,11 +283,15 @@
     return inter.map(function (p) {
       var c = p.counters || {};
       var s = (p.summaries || {})['http.response_time'];
+      var completed = get(c, 'vusers.completed', 0);
+      var failed = get(c, 'vusers.failed', 0);
+      var total = completed + failed;
       return {
         tSec: ((p.period || 0) - t0) / 1000,
-        completed: get(c, 'vusers.completed', 0),
-        failed: get(c, 'vusers.failed', 0),
+        completed: completed,
+        failed: failed,
         requests: get(c, 'http.requests', 0),
+        errorRate: total ? (failed / total * 100) : null,
         p50: s ? s.p50 : null,
         p95: s ? s.p95 : null,
         p99: s ? s.p99 : null
@@ -254,29 +319,42 @@
     return items;
   }
 
-  function renderStats(agg, periods) {
+  function computeAggMetrics(data) {
+    var agg = data.aggregate;
     var counters = agg.counters || {};
     var rates = agg.rates || {};
     var respTime = (agg.summaries || {})['http.response_time'] || {};
     var completed = get(counters, 'vusers.completed', 0);
     var failed = get(counters, 'vusers.failed', 0);
     var total = completed + failed;
-    var errorRate = total ? (failed / total * 100) : null;
-    var durationSec = ((agg.lastMetricAt || 0) - (agg.firstMetricAt || 0)) / 1000;
+    return {
+      duration: ((agg.lastMetricAt || 0) - (agg.firstMetricAt || 0)) / 1000,
+      requests: get(counters, 'http.requests', 0),
+      ok200: get(counters, 'http.codes.200', 0),
+      failed: failed,
+      errorRate: total ? (failed / total * 100) : null,
+      p50: respTime.p50, p95: respTime.p95, p99: respTime.p99,
+      requestRate: get(rates, 'http.request_rate', 0)
+    };
+  }
 
-    runSub.textContent = 'Duración ' + fmtTime(durationSec) + ' · ' +
-      get(counters, 'http.requests', 0) + ' requests enviados · ' +
-      periods.length + ' intervalos';
+  function makeEntry(name, data) {
+    return { name: name, data: data, periods: buildPeriods(data) };
+  }
+
+  // ---- Single-report stats tiles ----
+  function renderStatsSingle(entry, host) {
+    var m = computeAggMetrics(entry.data);
+    var counters = entry.data.aggregate.counters || {};
 
     var tiles = [
-      { label: 'Requests enviados', value: fmtNum(get(counters, 'http.requests', 0)) },
-      { label: 'Respuestas 200', value: fmtNum(get(counters, 'http.codes.200', 0)), cls: 'good' },
-      { label: 'Vusers fallidos', value: fmtNum(failed), cls: failed > 0 ? 'critical' : '' },
-      { label: 'Tasa de error', value: fmtPct(errorRate), cls: errorRate > 10 ? 'critical' : '' },
-      { label: 'p95 latencia', value: fmtMs(respTime.p95) },
-      { label: 'Request rate', value: fmtNum(get(rates, 'http.request_rate', 0)) + '/s' }
+      { label: 'Requests enviados', value: fmtNum(m.requests) },
+      { label: 'Respuestas 200', value: fmtNum(m.ok200), cls: 'good' },
+      { label: 'Vusers fallidos', value: fmtNum(m.failed), cls: m.failed > 0 ? 'critical' : '' },
+      { label: 'Tasa de error', value: fmtPct(m.errorRate), cls: (m.errorRate != null && m.errorRate > 10) ? 'critical' : '' },
+      { label: 'p95 latencia', value: fmtMs(m.p95) },
+      { label: 'Request rate', value: fmtNum(m.requestRate) + '/s' }
     ];
-    var host = document.getElementById('stats');
     host.innerHTML = '';
     tiles.forEach(function (t) {
       var div = document.createElement('div');
@@ -288,65 +366,120 @@
     });
   }
 
-  // ---- Line chart (latency percentiles) ----
-  function renderLineChart(container, legendHost, tableHost, periods, seriesDefs) {
+  // ---- Comparison stats table ----
+  function renderStatsComparison(list, host) {
+    var METRICS = [
+      { label: 'Duración', get: function (m) { return fmtTime(m.duration); } },
+      { label: 'Requests enviados', get: function (m) { return fmtNum(m.requests); } },
+      { label: 'Respuestas 200', get: function (m) { return fmtNum(m.ok200); } },
+      { label: 'Vusers fallidos', get: function (m) { return fmtNum(m.failed); }, cls: function (m) { return m.failed > 0 ? 'critical' : ''; } },
+      { label: 'Tasa de error', get: function (m) { return fmtPct(m.errorRate); }, cls: function (m) { return (m.errorRate != null && m.errorRate > 10) ? 'critical' : ''; } },
+      { label: 'p50 latencia', get: function (m) { return fmtMs(m.p50); } },
+      { label: 'p95 latencia', get: function (m) { return fmtMs(m.p95); } },
+      { label: 'p99 latencia', get: function (m) { return fmtMs(m.p99); } },
+      { label: 'Request rate', get: function (m) { return fmtNum(m.requestRate) + '/s'; } }
+    ];
+    var metrics = list.map(function (e) { return computeAggMetrics(e.data); });
+
+    var table = document.createElement('table');
+    table.className = 'compare-table';
+    var thead = document.createElement('thead');
+    var headRow = document.createElement('tr');
+    headRow.appendChild(document.createElement('th'));
+    list.forEach(function (entry, i) {
+      var th = document.createElement('th');
+      var dot = document.createElement('span');
+      dot.className = 'dot';
+      dot.style.background = REPORT_COLORS[i];
+      th.appendChild(dot);
+      th.appendChild(document.createTextNode(entry.name));
+      headRow.appendChild(th);
+    });
+    thead.appendChild(headRow);
+    table.appendChild(thead);
+
+    var tbody = document.createElement('tbody');
+    METRICS.forEach(function (metricDef) {
+      var tr = document.createElement('tr');
+      var labelTd = document.createElement('td');
+      labelTd.textContent = metricDef.label;
+      tr.appendChild(labelTd);
+      metrics.forEach(function (m) {
+        var td = document.createElement('td');
+        td.textContent = metricDef.get(m);
+        if (metricDef.cls) {
+          var c = metricDef.cls(m);
+          if (c) td.className = c;
+        }
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+
+    host.innerHTML = '';
+    host.appendChild(table);
+  }
+
+  // ---- Generic line chart: seriesList = [{ name, color, points: [{t, v}] }] ----
+  function renderLineChart(container, legendHost, seriesList, opts) {
+    opts = opts || {};
+    var isPct = opts.yUnit === 'pct';
     var W = 860, H = 280, M = { top: 16, right: 16, bottom: 28, left: 44 };
     var innerW = W - M.left - M.right, innerH = H - M.top - M.bottom;
 
-    var allVals = [];
-    periods.forEach(function (p) { seriesDefs.forEach(function (sd) { if (p[sd.key] != null) allVals.push(p[sd.key]); }); });
+    var allVals = [], allT = [];
+    seriesList.forEach(function (s) {
+      s.points.forEach(function (p) {
+        if (p.v != null) allVals.push(p.v);
+        allT.push(p.t);
+      });
+    });
     var maxY = allVals.length ? Math.max.apply(null, allVals) : 1;
-    maxY = Math.ceil(maxY / 200) * 200 || 200;
-    var maxX = periods.length ? periods[periods.length - 1].tSec : 1;
+    maxY = isPct ? (Math.min(100, Math.ceil(maxY / 10) * 10) || 10) : (Math.ceil(maxY / 200) * 200 || 200);
+    var maxX = allT.length ? Math.max.apply(null, allT) : 1;
 
     function xPos(t) { return M.left + (maxX ? (t / maxX) * innerW : 0); }
     function yPos(v) { return M.top + innerH - (v / maxY) * innerH; }
 
     var svgParts = [];
-    svgParts.push('<svg class="chart" viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Latencia por intervalo">');
+    svgParts.push('<svg class="chart" viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Gráfico de líneas">');
 
-    // gridlines + y ticks
     var ticks = 4;
     for (var i = 0; i <= ticks; i++) {
       var v = (maxY / ticks) * i;
       var y = yPos(v);
       svgParts.push('<line class="gridline" x1="' + M.left + '" x2="' + (W - M.right) + '" y1="' + y + '" y2="' + y + '"/>');
-      svgParts.push('<text class="axis-label" x="' + (M.left - 8) + '" y="' + (y + 3) + '" text-anchor="end">' + Math.round(v) + '</text>');
+      svgParts.push('<text class="axis-label" x="' + (M.left - 8) + '" y="' + (y + 3) + '" text-anchor="end">' + Math.round(v) + (isPct ? '%' : '') + '</text>');
     }
     svgParts.push('<line class="baseline" x1="' + M.left + '" x2="' + (W - M.right) + '" y1="' + (M.top + innerH) + '" y2="' + (M.top + innerH) + '"/>');
 
-    // x ticks (~5)
-    var xTickCount = Math.min(6, periods.length);
+    var xTickCount = 6;
     for (var k = 0; k < xTickCount; k++) {
-      var idx = Math.round((periods.length - 1) * (k / (xTickCount - 1 || 1)));
-      var p = periods[idx];
-      if (!p) continue;
-      var x = xPos(p.tSec);
-      svgParts.push('<text class="axis-label" x="' + x + '" y="' + (H - 8) + '" text-anchor="middle">' + fmtTime(p.tSec) + '</text>');
+      var t = maxX * (k / (xTickCount - 1 || 1));
+      var x = xPos(t);
+      svgParts.push('<text class="axis-label" x="' + x + '" y="' + (H - 8) + '" text-anchor="middle">' + fmtTime(t) + '</text>');
     }
 
-    seriesDefs.forEach(function (sd) {
+    seriesList.forEach(function (s) {
       var d = '', started = false;
-      periods.forEach(function (p) {
-        var v = p[sd.key];
-        if (v == null) { started = false; return; }
+      s.points.forEach(function (p) {
+        if (p.v == null) { started = false; return; }
         var cmd = started ? 'L' : 'M';
-        d += cmd + xPos(p.tSec).toFixed(1) + ' ' + yPos(v).toFixed(1) + ' ';
+        d += cmd + xPos(p.t).toFixed(1) + ' ' + yPos(p.v).toFixed(1) + ' ';
         started = true;
       });
-      svgParts.push('<path d="' + d.trim() + '" fill="none" stroke="' + sd.color + '" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" data-series="' + sd.key + '"/>');
+      svgParts.push('<path d="' + d.trim() + '" fill="none" stroke="' + s.color + '" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>');
 
-      // end marker + direct label
-      for (var j = periods.length - 1; j >= 0; j--) {
-        if (periods[j][sd.key] != null) {
-          var ex = xPos(periods[j].tSec), ey = yPos(periods[j][sd.key]);
-          svgParts.push('<circle cx="' + ex + '" cy="' + ey + '" r="4" fill="' + sd.color + '" stroke="var(--surface-1)" stroke-width="2"/>');
+      for (var j = s.points.length - 1; j >= 0; j--) {
+        if (s.points[j].v != null) {
+          var ex = xPos(s.points[j].t), ey = yPos(s.points[j].v);
+          svgParts.push('<circle cx="' + ex + '" cy="' + ey + '" r="4" fill="' + s.color + '" stroke="var(--surface-1)" stroke-width="2"/>');
           break;
         }
       }
     });
 
-    // hover layer
     svgParts.push('<rect class="hover-capture" x="' + M.left + '" y="' + M.top + '" width="' + innerW + '" height="' + innerH + '" fill="transparent"/>');
     svgParts.push('<line id="crosshair" class="baseline" x1="0" x2="0" y1="' + M.top + '" y2="' + (M.top + innerH) + '" style="visibility:hidden;"/>');
     svgParts.push('</svg>');
@@ -356,32 +489,38 @@
     var crosshair = svg.querySelector('#crosshair');
     var capture = svg.querySelector('.hover-capture');
 
+    function nearestPoint(points, t) {
+      var closest = null, closestDist = Infinity;
+      points.forEach(function (p) {
+        var dist = Math.abs(p.t - t);
+        if (dist < closestDist) { closestDist = dist; closest = p; }
+      });
+      return closest;
+    }
+
     capture.addEventListener('pointermove', function (evt) {
       var rect = svg.getBoundingClientRect();
       var scale = W / rect.width;
       var mx = (evt.clientX - rect.left) * scale;
       var t = ((mx - M.left) / innerW) * maxX;
-      var closest = null, closestDist = Infinity;
-      periods.forEach(function (p) {
-        var dist = Math.abs(p.tSec - t);
-        if (dist < closestDist) { closestDist = dist; closest = p; }
-      });
-      if (!closest) return;
-      var cx = xPos(closest.tSec);
+      if (t < 0) t = 0;
+      if (t > maxX) t = maxX;
+
+      var cx = xPos(t);
       crosshair.setAttribute('x1', cx); crosshair.setAttribute('x2', cx);
       crosshair.style.visibility = 'visible';
 
-      var rows = seriesDefs.map(function (sd) {
-        var v = closest[sd.key];
-        return '<div class="t-row"><span class="key" style="background:' + sd.color + '"></span>' +
+      var rowsHtml = seriesList.map(function (s) {
+        return '<div class="t-row"><span class="key" style="background:' + s.color + '"></span>' +
           '<span class="name"></span><span class="val"></span></div>';
       }).join('');
-      tooltip.innerHTML = '<div class="t-title"></div>' + rows;
-      tooltip.querySelector('.t-title').textContent = 't = ' + fmtTime(closest.tSec);
+      tooltip.innerHTML = '<div class="t-title"></div>' + rowsHtml;
+      tooltip.querySelector('.t-title').textContent = 't ≈ ' + fmtTime(t);
       var rowEls = tooltip.querySelectorAll('.t-row');
-      seriesDefs.forEach(function (sd, i) {
-        rowEls[i].querySelector('.name').textContent = sd.name;
-        rowEls[i].querySelector('.val').textContent = fmtMs(closest[sd.key]);
+      seriesList.forEach(function (s, i) {
+        var np = nearestPoint(s.points, t);
+        rowEls[i].querySelector('.name').textContent = s.name;
+        rowEls[i].querySelector('.val').textContent = isPct ? fmtPct(np ? np.v : null) : fmtMs(np ? np.v : null);
       });
       tooltip.style.visibility = 'visible';
       tooltip.style.left = (evt.clientX + 14) + 'px';
@@ -392,18 +531,27 @@
       tooltip.style.visibility = 'hidden';
     });
 
-    legendHost.innerHTML = seriesDefs.map(function (sd) {
-      return '<span class="item"><span class="swatch-line" style="background:' + sd.color + '"></span>' + sd.name + '</span>';
+    legendHost.innerHTML = seriesList.map(function () {
+      return '<span class="item"><span class="swatch-line"></span><span class="name-slot"></span></span>';
     }).join('');
-
-    var rowsHtml = '<thead><tr><th>t</th>' + seriesDefs.map(function (s) { return '<th>' + s.name + '</th>'; }).join('') + '</tr></thead><tbody>';
-    periods.forEach(function (p) {
-      rowsHtml += '<tr><td>' + fmtTime(p.tSec) + '</td>' + seriesDefs.map(function (sd) { return '<td>' + fmtMs(p[sd.key]) + '</td>'; }).join('') + '</tr>';
+    var legendItems = legendHost.querySelectorAll('.item');
+    seriesList.forEach(function (s, i) {
+      legendItems[i].querySelector('.swatch-line').style.background = s.color;
+      legendItems[i].querySelector('.name-slot').textContent = s.name;
     });
-    tableHost.innerHTML = rowsHtml + '</tbody>';
   }
 
-  // ---- Stacked bar chart (vusers completed vs failed) ----
+  function buildLatencyTable(tableHost, periods, defs) {
+    var rowsHtml = '<thead><tr><th>t</th>' + defs.map(function (d) { return '<th></th>'; }).join('') + '</tr></thead><tbody>';
+    periods.forEach(function (p) {
+      rowsHtml += '<tr><td>' + fmtTime(p.tSec) + '</td>' + defs.map(function (d) { return '<td>' + fmtMs(p[d.key]) + '</td>'; }).join('') + '</tr>';
+    });
+    tableHost.innerHTML = rowsHtml + '</tbody>';
+    var ths = tableHost.querySelectorAll('thead th');
+    defs.forEach(function (d, i) { ths[i + 1].textContent = d.name; });
+  }
+
+  // ---- Stacked bar chart (single-report vusers completed vs failed) ----
   function renderBarChart(container, legendHost, tableHost, periods) {
     var W = 860, H = 260, M = { top: 16, right: 16, bottom: 28, left: 44 };
     var innerW = W - M.left - M.right, innerH = H - M.top - M.bottom;
@@ -430,7 +578,7 @@
     periods.forEach(function (p, idx) {
       var cx = M.left + slot * idx + slot / 2;
       var x = cx - barW / 2;
-      var gap = 1; // half of the 2px surface gap on each side
+      var gap = 1;
       var yFailedTop = yPos(p.failed);
       var yCompletedTop = yPos(p.completed + p.failed);
       if (p.failed > 0) {
@@ -479,7 +627,7 @@
     tableHost.innerHTML = rowsHtml + '</tbody>';
   }
 
-  // ---- Horizontal breakdown bar chart ----
+  // ---- Horizontal breakdown bar chart (single report) ----
   function renderBreakdownChart(container, items) {
     var W = 860, rowH = 34, M = { top: 8, right: 60, bottom: 8, left: 110 };
     var H = M.top + M.bottom + rowH * items.length;
@@ -506,6 +654,79 @@
     });
   }
 
+  // ---- Grouped breakdown bars (comparison mode) ----
+  function renderBreakdownChartMulti(container, legendHost, list) {
+    var perReport = list.map(function (e) { return buildBreakdown(e.data.aggregate.counters || {}); });
+    var labelMax = {};
+    perReport.forEach(function (items) {
+      items.forEach(function (it) {
+        if (!(it.label in labelMax) || it.value > labelMax[it.label]) labelMax[it.label] = it.value;
+      });
+    });
+    var labels = Object.keys(labelMax).sort(function (a, b) { return labelMax[b] - labelMax[a]; });
+    var maxV = labels.reduce(function (m, l) { return Math.max(m, labelMax[l]); }, 1);
+
+    if (!labels.length) { container.innerHTML = ''; legendHost.innerHTML = ''; return; }
+
+    var n = list.length;
+    var barH = Math.max(6, Math.min(16, Math.floor(22 / n)));
+    var gap = 2;
+    var groupH = barH * n + gap * (n - 1) + 14;
+    var W = 860, M = { top: 8, right: 20, bottom: 8, left: 130 };
+    var H = M.top + M.bottom + groupH * labels.length;
+    var innerW = W - M.left - M.right;
+
+    var parts = [];
+    parts.push('<svg class="chart" viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Resultados por tipo (comparación)">');
+    labels.forEach(function (label, li) {
+      var groupY = M.top + li * groupH;
+      parts.push('<text class="axis-label" x="' + (M.left - 10) + '" y="' + (groupY + groupH / 2 - 7 + 4) + '" text-anchor="end"></text>');
+      list.forEach(function (entry, ri) {
+        var items = perReport[ri];
+        var found = null;
+        for (var ii = 0; ii < items.length; ii++) { if (items[ii].label === label) { found = items[ii]; break; } }
+        var value = found ? found.value : 0;
+        var w = maxV ? (value / maxV) * innerW : 0;
+        var y = groupY + ri * (barH + gap);
+        parts.push('<rect x="' + M.left + '" y="' + y + '" width="' + (value > 0 ? Math.max(w, 2) : 0) + '" height="' + barH + '" rx="3" fill="' + REPORT_COLORS[ri] + '" data-li="' + li + '" data-ri="' + ri + '"/>');
+      });
+    });
+    parts.push('</svg>');
+    container.innerHTML = parts.join('');
+
+    var texts = container.querySelectorAll('text.axis-label');
+    labels.forEach(function (label, li) { texts[li].textContent = label; });
+
+    container.querySelectorAll('rect[data-li]').forEach(function (rect) {
+      rect.addEventListener('pointermove', function (evt) {
+        var li = +rect.getAttribute('data-li'), ri = +rect.getAttribute('data-ri');
+        var label = labels[li];
+        var entry = list[ri];
+        var items = perReport[ri];
+        var found = null;
+        for (var ii = 0; ii < items.length; ii++) { if (items[ii].label === label) { found = items[ii]; break; } }
+        var value = found ? found.value : 0;
+        tooltip.innerHTML = '<div class="t-title"></div><div class="t-row"><span class="key" style="background:' + REPORT_COLORS[ri] + '"></span><span class="name"></span><span class="val"></span></div>';
+        tooltip.querySelector('.t-title').textContent = label;
+        tooltip.querySelector('.name').textContent = entry.name;
+        tooltip.querySelector('.val').textContent = fmtNum(value);
+        tooltip.style.visibility = 'visible';
+        tooltip.style.left = (evt.clientX + 14) + 'px';
+        tooltip.style.top = (evt.clientY + 14 + window.scrollY) + 'px';
+      });
+      rect.addEventListener('pointerleave', function () { tooltip.style.visibility = 'hidden'; });
+    });
+
+    legendHost.innerHTML = list.map(function () {
+      return '<span class="item"><span class="swatch-dot"></span><span class="name-slot"></span></span>';
+    }).join('');
+    var legendItems = legendHost.querySelectorAll('.item');
+    list.forEach(function (entry, i) {
+      legendItems[i].querySelector('.swatch-dot').style.background = REPORT_COLORS[i];
+      legendItems[i].querySelector('.name-slot').textContent = entry.name;
+    });
+  }
+
   function setupTableToggles() {
     document.querySelectorAll('.toggle-table').forEach(function (btn) {
       btn.addEventListener('click', function () {
@@ -517,9 +738,83 @@
   }
   setupTableToggles();
 
-  function render(data) {
-    if (!data || !data.aggregate) {
-      statusEl.textContent = 'El archivo no parece un reporte de Artillery válido (falta "aggregate").';
+  function renderSingle(entry) {
+    var m = computeAggMetrics(entry.data);
+    runSub.textContent = 'Duración ' + fmtTime(m.duration) + ' · ' +
+      m.requests + ' requests enviados · ' + entry.periods.length + ' intervalos';
+
+    renderStatsSingle(entry, document.getElementById('stats'));
+
+    var defs = [
+      { key: 'p50', name: 'p50', color: REPORT_COLORS[0] },
+      { key: 'p95', name: 'p95', color: 'var(--series-2)' },
+      { key: 'p99', name: 'p99', color: 'var(--series-3)' }
+    ];
+    renderLineChart(
+      document.getElementById('latencyChartWrap'),
+      document.getElementById('latencyLegend'),
+      defs.map(function (d) {
+        return { name: d.name, color: d.color, points: entry.periods.map(function (p) { return { t: p.tSec, v: p[d.key] }; }) };
+      }),
+      { yUnit: 'ms' }
+    );
+    buildLatencyTable(document.getElementById('latencyTable'), entry.periods, defs);
+
+    renderBarChart(
+      document.getElementById('vusersChartWrap'),
+      document.getElementById('vusersLegend'),
+      document.getElementById('vusersTable'),
+      entry.periods
+    );
+
+    renderBreakdownChart(
+      document.getElementById('breakdownChartWrap'),
+      buildBreakdown(entry.data.aggregate.counters || {})
+    );
+    document.getElementById('breakdownLegend').innerHTML = '';
+  }
+
+  function renderComparison(list) {
+    runSub.textContent = 'Comparando ' + list.length + ' reportes: ' + list.map(function (r) { return r.name; }).join(' · ');
+
+    renderStatsComparison(list, document.getElementById('stats'));
+
+    var metric = document.getElementById('metricSelect').value || 'p95';
+    renderLineChart(
+      document.getElementById('latencyChartWrap'),
+      document.getElementById('latencyLegend'),
+      list.map(function (entry, i) {
+        return { name: entry.name, color: REPORT_COLORS[i], points: entry.periods.map(function (p) { return { t: p.tSec, v: p[metric] }; }) };
+      }),
+      { yUnit: 'ms' }
+    );
+
+    renderLineChart(
+      document.getElementById('vusersChartWrap'),
+      document.getElementById('vusersLegend'),
+      list.map(function (entry, i) {
+        return { name: entry.name, color: REPORT_COLORS[i], points: entry.periods.map(function (p) { return { t: p.tSec, v: p.errorRate }; }) };
+      }),
+      { yUnit: 'pct' }
+    );
+
+    renderBreakdownChartMulti(
+      document.getElementById('breakdownChartWrap'),
+      document.getElementById('breakdownLegend'),
+      list
+    );
+  }
+
+  function renderAll() {
+    var list = [baseReport].concat(compareReports).filter(Boolean);
+    var statsHost = document.getElementById('stats');
+    var metricSelect = document.getElementById('metricSelect');
+    var latencyToggleBtn = document.getElementById('latencyToggleBtn');
+    var vusersToggleBtn = document.getElementById('vusersToggleBtn');
+    var latencyTable = document.getElementById('latencyTable');
+    var vusersTable = document.getElementById('vusersTable');
+
+    if (!list.length) {
       emptyState.style.display = 'block';
       content.style.display = 'none';
       return;
@@ -527,33 +822,102 @@
     emptyState.style.display = 'none';
     content.style.display = 'block';
 
-    var periods = buildPeriods(data);
-    renderStats(data.aggregate, periods);
-
-    renderLineChart(
-      document.getElementById('latencyChartWrap'),
-      document.getElementById('latencyLegend'),
-      document.getElementById('latencyTable'),
-      periods,
-      [
-        { key: 'p50', name: 'p50', color: SERIES_COLOR[0] },
-        { key: 'p95', name: 'p95', color: SERIES_COLOR[1] },
-        { key: 'p99', name: 'p99', color: SERIES_COLOR[2] }
-      ]
-    );
-
-    renderBarChart(
-      document.getElementById('vusersChartWrap'),
-      document.getElementById('vusersLegend'),
-      document.getElementById('vusersTable'),
-      periods
-    );
-
-    renderBreakdownChart(
-      document.getElementById('breakdownChartWrap'),
-      buildBreakdown(data.aggregate.counters || {})
-    );
+    if (list.length === 1) {
+      statsHost.classList.remove('mode-compare');
+      metricSelect.style.display = 'none';
+      latencyToggleBtn.style.display = '';
+      vusersToggleBtn.style.display = '';
+      document.getElementById('latencyTitle').textContent = 'Tiempo de respuesta (percentiles) por intervalo';
+      document.getElementById('latencySub').innerHTML = 'p50 / p95 / p99 de <code>http.response_time</code>, en ventanas de ~10 s';
+      document.getElementById('vusersTitle').textContent = 'Usuarios virtuales completados vs. fallidos';
+      document.getElementById('vusersSub').textContent = 'Por intervalo — un vuser "falla" cuando su request no cumple la expectativa (timeout, conexión, status code)';
+      renderSingle(list[0]);
+    } else {
+      statsHost.classList.add('mode-compare');
+      metricSelect.style.display = '';
+      latencyToggleBtn.style.display = 'none';
+      latencyToggleBtn.textContent = 'Ver como tabla';
+      latencyTable.classList.remove('show');
+      vusersToggleBtn.style.display = 'none';
+      vusersToggleBtn.textContent = 'Ver como tabla';
+      vusersTable.classList.remove('show');
+      document.getElementById('latencyTitle').textContent = 'Tiempo de respuesta por intervalo (comparación)';
+      document.getElementById('latencySub').textContent = 'Percentil seleccionado de http.response_time, por reporte, en ventanas de ~10 s';
+      document.getElementById('vusersTitle').textContent = 'Tasa de error de vusers por intervalo (comparación)';
+      document.getElementById('vusersSub').textContent = 'failed / (failed + completed) × 100, por intervalo y por reporte';
+      renderComparison(list);
+    }
   }
+
+  document.getElementById('metricSelect').addEventListener('change', renderAll);
+
+  // ---- Compare reports UI ----
+  var compareInput = document.getElementById('compareInput');
+  var compareChips = document.getElementById('compareChips');
+  var compareLabel = document.getElementById('compareLabel');
+  var compareHint = document.getElementById('compareHint');
+
+  function updateCompareControls() {
+    var atMax = compareReports.length >= MAX_COMPARE;
+    compareLabel.style.display = atMax ? 'none' : '';
+    compareInput.disabled = atMax;
+    compareHint.textContent = atMax
+      ? 'Máximo de 3 reportes de comparación alcanzado'
+      : (MAX_COMPARE - compareReports.length) + ' comparación(es) disponibles';
+  }
+
+  function renderChips() {
+    compareChips.innerHTML = '';
+    compareReports.forEach(function (entry, i) {
+      var chip = document.createElement('span');
+      chip.className = 'chip';
+      var dot = document.createElement('span');
+      dot.className = 'dot';
+      dot.style.background = REPORT_COLORS[i + 1];
+      var label = document.createElement('span');
+      label.textContent = entry.name;
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.textContent = '✕';
+      btn.title = 'Quitar ' + entry.name;
+      btn.addEventListener('click', function () {
+        compareReports.splice(i, 1);
+        renderChips();
+        renderAll();
+      });
+      chip.appendChild(dot);
+      chip.appendChild(label);
+      chip.appendChild(btn);
+      compareChips.appendChild(chip);
+    });
+    updateCompareControls();
+  }
+
+  compareInput.addEventListener('change', function (evt) {
+    var file = evt.target.files[0];
+    if (!file) return;
+    if (compareReports.length >= MAX_COMPARE) { compareInput.value = ''; return; }
+    var reader = new FileReader();
+    reader.onload = function () {
+      try {
+        var data = JSON.parse(reader.result);
+        if (!data || !data.aggregate) {
+          statusEl.textContent = 'El archivo "' + file.name + '" no parece un reporte de Artillery válido.';
+          return;
+        }
+        var name = file.name.replace(/\.json$/i, '');
+        compareReports.push(makeEntry(name, data));
+        renderChips();
+        renderAll();
+      } catch (e) {
+        statusEl.textContent = 'No se pudo interpretar "' + file.name + '" como JSON.';
+      }
+      compareInput.value = '';
+    };
+    reader.readAsText(file);
+  });
+
+  updateCompareControls();
 
   function tryFetch() {
     statusEl.textContent = 'Buscando ./report.json…';
@@ -561,7 +925,8 @@
       .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
       .then(function (data) {
         statusEl.textContent = 'Cargado automáticamente desde report.json';
-        render(data);
+        baseReport = makeEntry('report.json', data);
+        renderAll();
       })
       .catch(function () {
         statusEl.textContent = 'No se pudo leer el archivo automáticamente (¿lo abriste con file://?). Selecciona report.json arriba.';
@@ -577,7 +942,8 @@
       try {
         var data = JSON.parse(reader.result);
         statusEl.textContent = 'Cargado desde archivo: ' + file.name;
-        render(data);
+        baseReport = makeEntry(file.name.replace(/\.json$/i, ''), data);
+        renderAll();
       } catch (e) {
         statusEl.textContent = 'No se pudo interpretar el archivo como JSON.';
       }
