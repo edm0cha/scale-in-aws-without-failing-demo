@@ -34,6 +34,14 @@
       "Resource": "*"
     },
     {
+      "Sid": "EC2VpcRead",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeVpcAttribute"
+      ],
+      "Resource": "arn:aws:ec2:us-east-1:${account_id}:vpc/*"
+    },
+    {
       "Sid": "EC2SecurityGroupWrite",
       "Effect": "Allow",
       "Action": [
