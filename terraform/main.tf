@@ -1,52 +1,8 @@
-terraform {
-  required_version = ">= 1.6"
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.0"
-    }
-  }
-}
-
-provider "aws" {
-  region = var.aws_region
-}
-
-# ─── AMI ──────────────────────────────────────────────────────────────────────
-
-data "aws_ami" "amazon_linux_2023" {
-  most_recent = true
-  owners      = ["amazon"]
-
-  filter {
-    name   = "name"
-    values = ["al2023-ami-*-x86_64"]
-  }
-
-  filter {
-    name   = "virtualization-type"
-    values = ["hvm"]
-  }
-}
-
-# ─── Networking (default VPC) ─────────────────────────────────────────────────
-
-data "aws_vpc" "default" {
-  default = true
-}
-
-data "aws_subnets" "default" {
-  filter {
-    name   = "vpc-id"
-    values = [data.aws_vpc.default.id]
-  }
-}
-
 # ─── Security Groups ──────────────────────────────────────────────────────────
 
 # ALB — accepts HTTP on port 80 from the internet
 resource "aws_security_group" "alb" {
-  name        = "${var.app_name}-alb-sg"
+  name        = "${local.short_name}-alb-sg"
   description = "Allow HTTP inbound to ALB"
   vpc_id      = data.aws_vpc.default.id
 
@@ -66,13 +22,13 @@ resource "aws_security_group" "alb" {
   }
 
   tags = {
-    Name = "${var.app_name}-alb-sg"
+    Name = "${local.short_name}-alb-sg"
   }
 }
 
 # EC2 — accepts app traffic from the ALB and SSH from anywhere
 resource "aws_security_group" "app" {
-  name        = "${var.app_name}-sg"
+  name        = "${local.short_name}-sg"
   description = "Allow HTTP app traffic and SSH"
   vpc_id      = data.aws_vpc.default.id
 
@@ -102,18 +58,53 @@ resource "aws_security_group" "app" {
   }
 
   tags = {
-    Name = "${var.app_name}-sg"
+    Name = "${local.short_name}-sg"
   }
+}
+
+# ─── IAM (instance role) ──────────────────────────────────────────────────────
+# Lets the CloudWatch Agent on each instance publish memory metrics — CPU
+# utilization is available for free from the hypervisor, memory is not.
+
+data "aws_iam_policy_document" "ec2_assume" {
+  statement {
+    effect  = "Allow"
+    actions = ["sts:AssumeRole"]
+
+    principals {
+      type        = "Service"
+      identifiers = ["ec2.amazonaws.com"]
+    }
+  }
+}
+
+resource "aws_iam_role" "app" {
+  name               = "${local.short_name}-app-role"
+  assume_role_policy = data.aws_iam_policy_document.ec2_assume.json
+}
+
+resource "aws_iam_role_policy_attachment" "cloudwatch_agent" {
+  role       = aws_iam_role.app.name
+  policy_arn = "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy"
+}
+
+resource "aws_iam_instance_profile" "app" {
+  name = "${local.short_name}-app-profile"
+  role = aws_iam_role.app.name
 }
 
 # ─── Launch Template ──────────────────────────────────────────────────────────
 
 resource "aws_launch_template" "app" {
-  name_prefix   = "${var.app_name}-"
+  name_prefix   = "${local.short_name}-"
   image_id      = data.aws_ami.amazon_linux_2023.id
   instance_type = var.instance_type
 
   vpc_security_group_ids = [aws_security_group.app.id]
+
+  iam_instance_profile {
+    name = aws_iam_instance_profile.app.name
+  }
 
   # Enable detailed (1-minute) CloudWatch metrics so spikes show up fast
   monitoring {
@@ -138,7 +129,7 @@ resource "aws_launch_template" "app" {
 # ─── Auto Scaling Group ───────────────────────────────────────────────────────
 
 resource "aws_autoscaling_group" "app" {
-  name                      = "${var.app_name}-asg"
+  name                      = "${local.short_name}-asg"
   min_size                  = 1
   max_size                  = 4
   desired_capacity          = 2
@@ -156,14 +147,15 @@ resource "aws_autoscaling_group" "app" {
 
   tag {
     key                 = "Name"
-    value               = var.app_name
+    value               = local.short_name
     propagate_at_launch = true
   }
 }
 
 # CPU-based target tracking policy — scale out when average CPU exceeds 60 %
+# See README "Why these thresholds?" for how 60 % was derived from load-test data.
 resource "aws_autoscaling_policy" "cpu" {
-  name                   = "${var.app_name}-cpu-policy"
+  name                   = "${local.short_name}-cpu-policy"
   autoscaling_group_name = aws_autoscaling_group.app.name
   policy_type            = "TargetTrackingScaling"
 
@@ -175,13 +167,39 @@ resource "aws_autoscaling_policy" "cpu" {
   }
 }
 
+# Memory-based target tracking policy — safety net, not the primary lever for
+# this CPU-bound workload. Reads mem_used_percent published by the CloudWatch
+# Agent (namespace "CWAgent", see user-data.sh) under the ASG's own dimension.
+# The ASG scales to satisfy whichever of the CPU or memory policies asks for
+# more capacity — they coexist, they don't override each other.
+resource "aws_autoscaling_policy" "memory" {
+  name                   = "${local.short_name}-memory-policy"
+  autoscaling_group_name = aws_autoscaling_group.app.name
+  policy_type            = "TargetTrackingScaling"
+
+  target_tracking_configuration {
+    customized_metric_specification {
+      metric_name = "mem_used_percent"
+      namespace   = "CWAgent"
+      statistic   = "Average"
+      unit        = "Percent"
+
+      metric_dimension {
+        name  = "AutoScalingGroupName"
+        value = aws_autoscaling_group.app.name
+      }
+    }
+    target_value = 75.0
+  }
+}
+
 # ─── Scheduled Scaling ────────────────────────────────────────────────────────
 # All times are UTC. Adjust recurrence if your audience is in a different timezone.
 
 # 10 PM UTC — scale fleet to 0 (night hours, no traffic expected)
 # min_size must also be set to 0, otherwise the ASG will not go below its minimum
 resource "aws_autoscaling_schedule" "scale_down_night" {
-  scheduled_action_name  = "${var.app_name}-scale-down-night"
+  scheduled_action_name  = "${local.short_name}-scale-down-night"
   autoscaling_group_name = aws_autoscaling_group.app.name
   recurrence             = "0 22 * * *"
   time_zone              = "UTC"
@@ -192,7 +210,7 @@ resource "aws_autoscaling_schedule" "scale_down_night" {
 
 # 6 AM UTC — bring 1 instance back online (morning warm-up before peak traffic)
 resource "aws_autoscaling_schedule" "scale_up_morning" {
-  scheduled_action_name  = "${var.app_name}-scale-up-morning"
+  scheduled_action_name  = "${local.short_name}-scale-up-morning"
   autoscaling_group_name = aws_autoscaling_group.app.name
   recurrence             = "0 6 * * *"
   time_zone              = "UTC"
@@ -204,19 +222,19 @@ resource "aws_autoscaling_schedule" "scale_up_morning" {
 # ─── Application Load Balancer ────────────────────────────────────────────────
 
 resource "aws_lb" "app" {
-  name               = "${var.app_name}-alb"
+  name               = "${local.short_name}-alb"
   internal           = false
   load_balancer_type = "application"
   security_groups    = [aws_security_group.alb.id]
   subnets            = data.aws_subnets.default.ids
 
   tags = {
-    Name = "${var.app_name}-alb"
+    Name = "${local.short_name}-alb"
   }
 }
 
 resource "aws_lb_target_group" "app" {
-  name     = "${var.app_name}-tg"
+  name     = "${local.short_name}-tg"
   port     = 3000
   protocol = "HTTP"
   vpc_id   = data.aws_vpc.default.id
@@ -229,7 +247,7 @@ resource "aws_lb_target_group" "app" {
   }
 
   tags = {
-    Name = "${var.app_name}-tg"
+    Name = "${local.short_name}-tg"
   }
 }
 

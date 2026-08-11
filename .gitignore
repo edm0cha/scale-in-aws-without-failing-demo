@@ -9,6 +9,7 @@ yarn-error.log*
 .terraform.lock.hcl
 *.tfstate
 *.tfstate.backup
+*.tfstate.*.info
 *.tfstate.*.backup
 *.tfstate.*.info
 *.tfplan
