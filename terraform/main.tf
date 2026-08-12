@@ -152,8 +152,11 @@ resource "aws_autoscaling_group" "app" {
   }
 }
 
-# CPU-based target tracking policy — scale out when average CPU exceeds 60 %
-# See README "Why these thresholds?" for how 60 % was derived from load-test data.
+# CPU-based target tracking policy — scale out when average CPU exceeds 20 %.
+# Lowered from 30 % because target tracking + health checks take ~3-5 min end
+# to end; triggering earlier buys more runway before a fast ramp saturates
+# the baseline fleet (see load-test/04-right-sizing.json for the failure mode
+# this was tuned against: ~86 % error rate while waiting for scale-out).
 resource "aws_autoscaling_policy" "cpu" {
   name                   = "${local.short_name}-cpu-policy"
   autoscaling_group_name = aws_autoscaling_group.app.name
@@ -163,7 +166,7 @@ resource "aws_autoscaling_policy" "cpu" {
     predefined_metric_specification {
       predefined_metric_type = "ASGAverageCPUUtilization"
     }
-    target_value = 30.0
+    target_value = 20.0
   }
 }
 

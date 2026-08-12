@@ -4,25 +4,43 @@ config:
   #   artillery run artillery.yml
   target: "{{ $env.TARGET_URL }}"
 
+  # Gradual growth instead of a near-instant spike. A CPU target-tracking
+  # policy needs ~3-6 min end to end to react (CloudWatch alarm: 3 datapoints
+  # x 60s, then instance boot, then ALB health checks) — see load-test/
+  # 04-right-sizing.json for what happens when demand outruns that window
+  # (5->70 req/s in 60s -> 72% error rate). Spreading the same total growth
+  # over ~16 min instead gives the ASG room to add capacity between each
+  # step, so you can watch it keep up in CloudWatch instead of falling behind.
   phases:
   # Phase 1 — baseline: prove the fleet handles low load comfortably
   - name: "Warm up"
-    duration: 30
-    arrivalRate: 5
-
-  # Phase 2 — ramp: push CPU above the 60 % scaling threshold on both instances
-  - name: "Ramp up"
     duration: 60
-    arrivalRate: 5
-    rampTo: 70
+    arrivalRate: 3
 
-  # Phase 3 — sustained pressure: hold load while ASG detects high CPU,
-  # provisions new instances (~90 s boot), and registers them with the ALB.
-  # 4 minutes gives enough time to watch the full scale-out in CloudWatch.
-  - name: "Sustained — wait for ASG to scale out"
-    duration: 240
-    arrivalRate: 70
+  # Phase 2 — organic growth: within baseline capacity (3 instances), no
+  # scaling needed yet — this is what "normal" traffic growth looks like
+  - name: "Ramp up — within baseline capacity"
+    duration: 180
+    arrivalRate: 3
+    rampTo: 10
 
+  # Phase 3 — crosses the 20 % CPU target, triggers the first scale-out
+  - name: "Ramp up — triggers first scale-out"
+    duration: 180
+    arrivalRate: 10
+    rampTo: 25
+
+  # Phase 4 — keeps growing, ASG should add more capacity to keep pace
+  - name: "Ramp up — triggers additional scale-out"
+    duration: 180
+    arrivalRate: 25
+    rampTo: 50
+
+  # Phase 5 — sustained peak: by now the fleet should have scaled to
+  # absorb this same 70 req/s that caused 72% errors in the flash-spike test
+  - name: "Sustained peak"
+    duration: 180
+    arrivalRate: 50
   # Report latency percentiles
   plugins:
     metrics-by-endpoint: {}
