@@ -14,33 +14,33 @@ config:
   phases:
   # Phase 1 — baseline: prove the fleet handles low load comfortably
   - name: "Warm up"
-    duration: 60
+    duration: 20
     arrivalRate: 3
 
   # Phase 2 — organic growth: within baseline capacity (3 instances), no
   # scaling needed yet — this is what "normal" traffic growth looks like
   - name: "Ramp up — within baseline capacity"
-    duration: 180
+    duration: 40
     arrivalRate: 3
     rampTo: 10
 
   # Phase 3 — crosses the 20 % CPU target, triggers the first scale-out
   - name: "Ramp up — triggers first scale-out"
-    duration: 180
+    duration: 40
     arrivalRate: 10
-    rampTo: 25
+    rampTo: 20
 
   # Phase 4 — keeps growing, ASG should add more capacity to keep pace
   - name: "Ramp up — triggers additional scale-out"
-    duration: 180
-    arrivalRate: 25
-    rampTo: 50
+    duration: 40
+    arrivalRate: 20
+    rampTo: 40
 
   # Phase 5 — sustained peak: by now the fleet should have scaled to
   # absorb this same 70 req/s that caused 72% errors in the flash-spike test
   - name: "Sustained peak"
-    duration: 180
-    arrivalRate: 50
+    duration: 40
+    arrivalRate: 40
   # Report latency percentiles
   plugins:
     metrics-by-endpoint: {}
