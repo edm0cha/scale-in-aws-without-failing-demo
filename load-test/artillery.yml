@@ -22,18 +22,18 @@ config:
   - name: "Ramp up — within baseline capacity"
     duration: 40
     arrivalRate: 3
-    rampTo: 10
+    rampTo: 15
 
   # Phase 3 — crosses the 20 % CPU target, triggers the first scale-out
   - name: "Ramp up — triggers first scale-out"
     duration: 40
-    arrivalRate: 10
-    rampTo: 20
+    arrivalRate: 15
+    rampTo: 30
 
   # Phase 4 — keeps growing, ASG should add more capacity to keep pace
   - name: "Ramp up — triggers additional scale-out"
     duration: 40
-    arrivalRate: 20
+    arrivalRate: 30
     rampTo: 40
 
   # Phase 5 — sustained peak: by now the fleet should have scaled to
